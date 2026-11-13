@@ -221,7 +221,9 @@ Section "Programm"
     RMDir /r "$BackupDir"
     ClearErrors
     SetOutPath "$INSTDIR\.neue-version"
-    File /r "${PAYLOAD}/*.*"
+    !cd "${PAYLOAD}"
+    File /r "*.*"
+    !cd "${__FILEDIR__}"
     IfErrors StageFailed
     WriteUninstaller "$INSTDIR\.neue-version\Deinstallieren.exe"
     IfErrors StageFailed
