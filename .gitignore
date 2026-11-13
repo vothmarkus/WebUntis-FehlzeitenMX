@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+.vs/
+Quellcode/Installer/Ausgabe/
+*.exe
+*.zip
+*.csv
+*.tsv
+*.user
+*.pfx
+*.p12

@@ -1,0 +1,5 @@
+Microsoft Windows SDK for .NET targeting pack
+https://aka.ms/WinSDKLicenseURL
+
+C#/WinRT
+https://github.com/microsoft/CsWinRT/blob/master/LICENSE

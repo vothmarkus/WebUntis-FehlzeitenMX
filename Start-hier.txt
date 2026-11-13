@@ -1,0 +1,121 @@
+WebUntis-FehlzeitenMX
+Windows x64 · Version 2.7
+
+INSTALLIEREN UND AKTUALISIEREN
+1. Das Setup ausführen. Es schließt die bisherige App beim Installieren.
+2. Die App über «WebUntis-FehlzeitenMX» im Windows-Startmenü starten.
+3. Unter Einstellungen die Klassen für Startseite (Klassenlehrer)
+   und Meine Klassen auswählen. Die gespeicherten Listen werden
+   übernommen. Die Startseite lädt ihre Klassen automatisch.
+4. Unter Meine Klassen die gewünschte Klasse anklicken. Die
+   gewählte Klasse ist blau hinterlegt.
+
+Das Setup aktualisiert eine vorhandene Installation von
+WebUntis-Auswertung am bisherigen Ort
+%LOCALAPPDATA%\Programs\WebUntis-Auswertung. Die Einstellungen
+und die optional gespeicherte Sitzung werden übernommen.
+Unter Einstellungen → Update kannst du deine installierte Version
+sehen und auf GitHub nach einer neueren Version suchen. Wenn eine
+passende Version verfügbar ist, lädt die App das Setup direkt,
+prüft die Prüfsumme und öffnet es. Der Link «Releases auf GitHub»
+führt zur manuellen Downloadseite.
+In den Einstellungen findest du darunter das Impressum und die
+Kurzanleitung. Die Kurzanleitung liegt auch als README.txt bei.
+
+Bei einem unsignierten Setup kann Windows beim Start eine
+SmartScreen-Warnung anzeigen.
+
+SCHULJAHR
+Unter Einstellungen das Schuljahr für die beiden Klassenansichten,
+den Standardzeitraum der Tagesmatrix und den Namensexport wählen.
+Die App wechselt zuerst das globale Schuljahr in WebUntis und
+liest dann den dort hinterlegten Berichtszeitraum. Für 2025/26
+liefert WebUntis am BKT den 25.08.2025 bis 19.07.2026.
+Das Menü in WebUntis bestimmt, welche Jahre verfügbar sind.
+
+TAGESMATRIX UND TAGESDETAILS
+Die Tagesmatrix bietet Klassenauswahl und einen frei einstellbaren
+Zeitraum. Aktualisieren ruft die Berichte neu ab. Mit Abbruch lässt
+sich ein laufender Abruf stoppen.
+Der Ladebalken unten rechts zeigt beim Laden der Klassenliste
+Aktivität. Auf der Startseite zählt er pro Matrix vier Schritte
+für die Abrufe und die Auswertung. Bei zwei Matrizen sind es acht
+Schritte, bei drei Matrizen zwölf. Nach dem Laden zeigt die
+Statusleiste die Abrufdauer.
+
+Ein Klick auf eine Tageszelle öffnet die Details als Tabelle.
+Den Trennbalken oberhalb der Tabelle ziehen, um ihre Höhe zu ändern.
+Die erste Spalte zeigt die Unterrichtsstunde (UE). Die App
+übernimmt die Nummer aus dem Bericht oder gleicht die Uhrzeit
+mit dem WebUntis-Zeitraster ab. Die Dauer steht kompakt in einer
+Zelle, etwa «1 Schulstunde (45′)». Spaltenbreiten lassen sich
+am Rand der Spaltenüberschrift ziehen. Der Text bricht um, wenn
+die Spalte zu schmal ist. Bei Bedarf ergänzt die App Uhrzeiten,
+Entschuldigungsstatus und Freitexte aus dem Klassenbuch.
+
+• anwesend oder kein Fehlzeiteintrag, │ Fehlzeit, E entschuldigte
+Fehlzeit, + verspätet, │+ oder E+ Fehlzeit und Verspätung,
+? ungeklärt, B befreit. Ein Punkt kann auch bedeuten, dass der
+vollständige Fehlzeitenbericht für die Person an diesem Tag keinen
+Eintrag enthält. Bei ? steht der Grund in den Tagesdetails und im
+Hinweis beim Zeigen auf die Zelle.
+Unter Einstellungen → Ansicht lässt sich die Legende für alle
+drei Matrixansichten gemeinsam ein- oder ausblenden.
+
+CSV-DOWNLOAD
+Unter Einstellungen auf «Notenrechner-CSV speichern …» klicken.
+Die App fügt die Namenslisten der angehakten Klassen unter
+Meine Klassen zusammen. Die CSV enthält Vorname, Nachname,
+Email, Klasse, Schuljahr und die Spalten für die WebUntis-ID.
+
+Die App ruft für das gewählte Schuljahr unter Mein Unterricht
+die CSV «Schüler*innen im Unterricht» der Fachzeilen ab. Sie
+liest den Nachnamen aus «Langname» und übernimmt eindeutig
+zugeordnete E-Mail-Adressen als Schülerkennung für den Notenrechner.
+Wo keine eindeutige Adresse
+vorliegt, enthält die Zeile die stabile WebUntis-Kennung. Die
+Statusleiste zeigt die Zahl der verarbeiteten Unterrichtsberichte
+und der Exportzeilen mit E-Mail-Adresse. Der Ladebalken zählt
+während des Abrufs die bearbeiteten Namenslisten und Fachberichte.
+Beim ersten Speichern ist der Windows-Downloadordner voreingestellt.
+Der zuletzt gewählte Ordner wird gemerkt.
+
+EINSTELLUNGEN UND ANMELDUNG
+Klassenlisten, Schuljahrauswahl und Optionen werden im Windows-
+Benutzerprofil gespeichert. «WebUntis-Anmeldung merken» speichert
+auf Wunsch die WebUntis-Sitzung verschlüsselt für das aktuelle
+Windows-Konto. Beim Neustart verwendet die App sie, solange
+WebUntis sie akzeptiert. Abmelden entfernt die gespeicherte Sitzung.
+Unter Windows 11 kann die App beim Start mit Windows Hello
+entsperrt werden.
+
+VORAUSSETZUNG UND DATEN
+Die .NET-Laufzeit ist im Programmordner enthalten. Fehlt die
+Microsoft Edge WebView2 Runtime, lädt das Setup sie über das
+Microsoft-Installationsprogramm. Dieser Schritt braucht eine
+Internetverbindung.
+
+Berichte für die Auswertung bleiben im Arbeitsspeicher. Die App
+schreibt nur auf ausdrücklichen Wunsch die Namens-CSV. Einstellungen
+und die optional gemerkte Sitzung liegen unter
+%LOCALAPPDATA%\WebUntis-Auswertung.
+
+QUELLCODE
+Mit dem .NET-10-SDK und NSIS ab Version 3.11 lässt sich das
+Setup aus dem vollständig entpackten Archiv neu bauen.
+.\Quellcode\Installer\Build-Setup.ps1
+
+Für einen signierten Build den Zertifikat-Fingerabdruck eines
+eingerichteten Codesignaturzertifikats übergeben. SignTool aus dem
+Windows SDK muss im PATH liegen oder mit -SignTool angegeben sein.
+.\Quellcode\Installer\Build-Setup.ps1 -CertificateThumbprint <Fingerabdruck>
+
+Für Azure Artifact Signing die eingerichtete Signier-DLL und die
+Metadatendatei über -ArtifactSigningDll und -ArtifactSigningMetadata
+übergeben. Das Build-Skript prüft Signatur und Zeitstempel.
+
+UPDATES VERÖFFENTLICHEN
+Auf github.com/vothmarkus/WebUntis-FehlzeitenMX ein stabiles Release
+mit einem Tag wie v2.7.0 anlegen und den unveränderten Installer
+<Programmname>-2.7-Setup-x64.exe als Release-Datei anhängen.
+Das aktuelle Release als «Latest» veröffentlichen.

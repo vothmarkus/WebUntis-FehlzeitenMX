@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>WebUntis-Auswertung</AssemblyName>
+    <Product>WebUntis-FehlzeitenMX</Product>
+    <AssemblyTitle>$(Product)</AssemblyTitle>
+    <RootNamespace>WebUntisAuswertung</RootNamespace>
+    <Version>2.7.0</Version>
+    <ApplicationIcon>Assets/BKT.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <ProjectReference Include="../Core/WebUntisAuswertung.Core.csproj" />
+    <EmbeddedResource Include="Reports.js" LogicalName="Reports.js" />
+    <EmbeddedResource Include="Assets/BKT.ico" LogicalName="BktIcon" />
+    <EmbeddedResource Include="../../README.txt" LogicalName="README.txt" />
+  </ItemGroup>
+  <Target Name="RemoveUnusedWebView2UiReferences" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf' Or '%(Reference.Filename)' == 'Microsoft.Web.WebView2.WinForms'" />
+    </ItemGroup>
+  </Target>
+</Project>
