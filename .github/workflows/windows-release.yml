@@ -74,6 +74,22 @@ jobs:
         run: |
           ./Quellcode/Installer/Build-Setup.ps1 -OutputDirectory release
 
+      - name: Installieren und Schließen der laufenden App testen
+        shell: pwsh
+        env:
+          BUILD_SETUP: ${{ steps.release.outputs.build }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:BUILD_SETUP -ne 'True') {
+              New-Item -ItemType Directory -Path release -Force | Out-Null
+              gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern '*-Setup-x64.exe' --dir release
+              if ($LASTEXITCODE -ne 0) { throw 'Das veröffentlichte Setup konnte nicht geladen werden.' }
+          }
+          $setup = @(Get-ChildItem release -Filter 'WebUntis-FehlzeitenMX-*-Setup-x64.exe' -File)
+          if ($setup.Count -ne 1) { throw 'Es wurde kein eindeutiges Setup gefunden.' }
+          ./Quellcode/Installer/Test-Setup.ps1 -Setup $setup[0].FullName -Version $env:RELEASE_TAG.Substring(1)
+
       - name: Setup veröffentlichen
         if: steps.release.outputs.build == 'True'
         shell: pwsh
