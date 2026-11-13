@@ -79,7 +79,7 @@ try {
     }
 
     $setupSource = Join-Path $PSScriptRoot "$appName.nsi"
-    $setupOptions = @('/V3', "/DAPP=$appName", "/DVERSION=$version", "/DOUTPUT=$builtInstaller", "/DPAYLOAD=$payload", "/DWEBVIEW_BOOTSTRAPPER=$bootstrapper")
+    $setupOptions = @('/WX', '/V3', "/DAPP=$appName", "/DVERSION=$version", "/DOUTPUT=$builtInstaller", "/DPAYLOAD=$payload", "/DWEBVIEW_BOOTSTRAPPER=$bootstrapper")
     & $MakeNsis @setupOptions $setupSource
     if ($LASTEXITCODE -ne 0) { throw 'NSIS compilation failed.' }
 

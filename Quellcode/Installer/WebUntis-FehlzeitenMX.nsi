@@ -68,6 +68,8 @@ Var RuntimeVersion
             ${If} $0 != 0
                 DetailPrint "Warte darauf, dass sich ${APP} schließt …"
                 System::Call 'kernel32::WaitForSingleObject(p $InstallMutex, i 15000)i.r0'
+            ${Else}
+                StrCpy $0 258
             ${EndIf}
         ${EndIf}
     !endif

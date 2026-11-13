@@ -101,8 +101,9 @@ und die optional gemerkte Sitzung liegen unter
 %LOCALAPPDATA%\WebUntis-Auswertung.
 
 QUELLCODE
-Mit dem .NET-10-SDK und NSIS ab Version 3.11 lässt sich das
-Setup aus dem vollständig entpackten Archiv neu bauen.
+Mit dem .NET-10-SDK und NSIS ab Version 3.11 samt
+amd64-unicode-Stubs und -Plugins lässt sich das Setup aus dem
+vollständig entpackten Archiv neu bauen.
 .\Quellcode\Installer\Build-Setup.ps1
 
 Für einen signierten Build den Zertifikat-Fingerabdruck eines
@@ -115,7 +116,9 @@ Metadatendatei über -ArtifactSigningDll und -ArtifactSigningMetadata
 übergeben. Das Build-Skript prüft Signatur und Zeitstempel.
 
 UPDATES VERÖFFENTLICHEN
-Auf github.com/vothmarkus/WebUntis-FehlzeitenMX ein stabiles Release
-mit einem Tag wie v2.7.0 anlegen und den unveränderten Installer
-<Programmname>-2.7-Setup-x64.exe als Release-Datei anhängen.
-Das aktuelle Release als «Latest» veröffentlichen.
+GitHub Actions erstellt bei einer neuen Projektversion auf main
+ein öffentliches Release mit einem Tag wie v2.7.0. Manuell lässt
+sich der Build in GitHub unter Actions → Windows-Release starten.
+Bei einem manuell veröffentlichten Release das Setup
+WebUntis-FehlzeitenMX-2.7-Setup-x64.exe anhängen und das Release
+als «Latest» markieren.

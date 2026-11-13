@@ -45,8 +45,26 @@ jobs:
         if: steps.release.outputs.build == 'True'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           choco install nsis --version=3.11.0 --no-progress --yes
           if ($LASTEXITCODE -ne 0) { throw 'NSIS konnte nicht eingerichtet werden.' }
+
+          # Die Standardinstallation von NSIS enthält nur x86-Stubs.
+          # Das Debian-Paket derselben Version liefert die gebauten x64-Komponenten.
+          $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          $temp = Join-Path $env:RUNNER_TEMP 'nsis-x64'
+          New-Item -ItemType Directory -Path $temp | Out-Null
+          $package = Join-Path $temp 'nsis-common.deb'
+          Invoke-WebRequest -UseBasicParsing 'https://deb.debian.org/debian/pool/main/n/nsis/nsis-common_3.11-1_all.deb' -OutFile $package
+          $digest = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
+          if ($digest -ne '103a3284c1a5356efa0aba90fdfc391c3cde8e7df8726377cef0f98471584047') { throw 'Unerwartete Prüfsumme für das NSIS-x64-Paket.' }
+          7z x $package "-o$temp" data.tar.xz -y
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS-x64-Paket konnte nicht entpackt werden.' }
+          tar -xf (Join-Path $temp 'data.tar.xz') -C $temp
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS-x64-Dateien konnten nicht entpackt werden.' }
+          $debian = Join-Path $temp 'usr/share/nsis'
+          Copy-Item (Join-Path $debian 'Stubs/*-amd64-unicode') (Join-Path $nsis 'Stubs')
+          Copy-Item (Join-Path $debian 'Plugins/amd64-unicode') (Join-Path $nsis 'Plugins') -Recurse -Force
 
       - name: Setup bauen
         if: steps.release.outputs.build == 'True'
