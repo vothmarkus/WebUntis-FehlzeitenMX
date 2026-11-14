@@ -10,6 +10,18 @@ Die Startseite lädt ihre Klassen automatisch. Unter Meine Klassen
 öffnet ein Klick die gewählte Klasse. Im Reiter Tagesmatrix kannst
 du Klasse und Zeitraum frei wählen. Ein Klick auf einen Tag in
 der Matrix zeigt die Details zur ausgewählten Person.
+Das rote × neben dem Ladebalken bricht den laufenden Abruf ab.
+
+Datenschutzmodus
+«Daten auf dem Gerät speichern» ist standardmäßig aus. Mit einem
+Windows-Hello-Passkey speichert die App vollständige Matrizen und
+Tagesdetails verschlüsselt. Voraussetzung ist ein aktuelles
+Windows 11 ab 24H2 mit PRF-Unterstützung für Windows Hello.
+Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und
+Uhrzeit des letzten Abrufs. Bei verfügbarer WebUntis-Sitzung wird
+der geöffnete Bereich im Hintergrund alle fünf Minuten geprüft.
+Beim Ausschalten der Option oder beim Abmelden löscht die App die
+gespeicherten Matrizen.
 
 Abwesenheiten entschuldigen
 Auf der Startseite öffnet ein Doppelklick auf eine Fehlzeit oder

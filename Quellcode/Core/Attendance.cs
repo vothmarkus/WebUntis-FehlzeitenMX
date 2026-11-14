@@ -120,18 +120,20 @@ public sealed class AttendanceMatrix
     public bool HasAbsenceReport { get; }
     public bool HasLatenessReport { get; }
     public bool IsDemo { get; }
+    public DateTimeOffset? FetchedAt { get; }
     public IReadOnlyList<SchoolPeriod> SchoolPeriods { get; }
     public Dictionary<(string Id, DateOnly Day), DayCell> Cells { get; } = new();
 
     public AttendanceMatrix(string className, DateOnly from, DateOnly to,
         IEnumerable<Student> roster, IEnumerable<Report> sources, bool isDemo = false, IEnumerable<AbsenceNote>? absenceNotes = null,
-        IReadOnlyList<SchoolPeriod>? schoolPeriods = null, string classId = "")
+        IReadOnlyList<SchoolPeriod>? schoolPeriods = null, string classId = "", DateTimeOffset? fetchedAt = null)
     {
         ClassName = className;
         ClassId = classId;
         From = from;
         To = to;
         IsDemo = isDemo;
+        FetchedAt = fetchedAt;
         SchoolPeriods = schoolPeriods ?? [];
         var reports = sources.ToArray();
         var notes = reports.SelectMany(report => report.Notes).ToList();

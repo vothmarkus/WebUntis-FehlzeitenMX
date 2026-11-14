@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
 using WebUntisAuswertung.Core;
 
 namespace WebUntisAuswertung;
@@ -40,7 +42,7 @@ internal sealed class MainForm : Form
     private readonly ComboBox classes = new() { Width = 140, AccessibleName = "Klasse oder Gruppe" };
     private readonly DateTimePicker from = DatePicker("Zeitraum von");
     private readonly DateTimePicker to = DatePicker("Zeitraum bis");
-    private readonly Button cancel = ActionButton("Abbruch");
+    private readonly TransferCancelButton cancel = new();
     private readonly ToolStripStatusLabel status = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly ToolStripStatusLabel loadingCount = new() { Visible = false, ForeColor = MatrixView.Ink };
     private readonly ToolStripProgressBar loading = new() { Visible = false, AutoSize = false,
@@ -52,6 +54,10 @@ internal sealed class MainForm : Form
     private readonly Label rememberedLogin = new() { AutoSize = true, MaximumSize = new Size(320, 0),
         ForeColor = AppTheme.Muted, Margin = new Padding(5, 0, 0, 10) };
     private readonly CheckBox hello = new() { Text = "Beim Start mit Windows Hello entsperren", AutoSize = true };
+    private readonly CheckBox storeData = new() { Text = "Daten auf dem Gerät speichern", AutoSize = true };
+    private readonly Label storageStatus = new() { AutoSize = true, ForeColor = AppTheme.Muted, MaximumSize = new Size(410, 0) };
+    private readonly Button unlockStore = ActionButton("Datenspeicher entsperren …");
+    private readonly System.Windows.Forms.Timer autoUpdate = new() { Interval = 5 * 60 * 1000 };
     private readonly ComboBox schoolYearPicker = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 245, AccessibleName = "Schuljahr auswählen" };
     private readonly Label schoolYearPeriod = new() { AutoSize = true, ForeColor = AppTheme.Muted };
     private readonly CheckBox showLegend = new() { Text = "Legende anzeigen", AutoSize = true };
@@ -64,9 +70,16 @@ internal sealed class MainForm : Form
     private readonly Dictionary<TabPage, string> pageStatuses = [];
     private readonly string appFolder;
     private readonly UntisBrowser browser;
+    private readonly MatrixCache matrixCache;
     private AppSettings settings;
     private ReportRange schoolYear;
     private CancellationTokenSource? running;
+    private bool backgroundRefresh;
+    private Task? backgroundTask;
+    private int waitingForBackground;
+    private bool closing;
+    private bool resumeAutomaticRefresh = true;
+    private bool refreshOnIdle;
     private bool updatingSettings;
     private bool sessionReady;
     private bool closeAfterCancellation;
@@ -74,12 +87,14 @@ internal sealed class MainForm : Form
     private bool checkedUpdateOnce;
     private UpdateRelease? availableUpdate;
     private string? openedMyClass;
+    private MatrixRequest? matrixRequest;
 
     internal MainForm(string appFolder)
     {
         this.appFolder = appFolder;
         settings = AppSettings.Load(appFolder);
         browser = new UntisBrowser(this, appFolder, settings.RememberLogin);
+        matrixCache = new MatrixCache(appFolder);
         schoolYear = SelectedSchoolYearRange();
         SetDates(schoolYear);
 
@@ -105,10 +120,11 @@ internal sealed class MainForm : Form
         SetLegendVisibility();
         tabs.TabPages.AddRange([homePage, myClassesPage, matrixPage, settingsPage]);
         tabs.SelectedTab = homePage;
-        tabs.Visible = !settings.ProtectWithHello;
+        tabs.Visible = !settings.ProtectWithHello && !settings.StoreDataOnDevice;
         var statusStrip = new StatusStrip { SizingGrip = false, BackColor = AppTheme.Surface, ForeColor = AppTheme.Muted,
             RenderMode = ToolStripRenderMode.System, Dock = DockStyle.Bottom };
-        statusStrip.Items.AddRange([status, loadingCount, loading]);
+        statusStrip.ShowItemToolTips = true;
+        statusStrip.Items.AddRange([status, loadingCount, loading, cancel]);
         var header = new SchoolWordmark(Icon?.ToBitmap()) { Visible = false };
         var headerTip = new ToolTip();
         headerTip.SetToolTip(header, "Website des Berufskollegs öffnen · bkt-dn.de");
@@ -155,8 +171,23 @@ internal sealed class MainForm : Form
         classes.TextChanged += (_, _) => SetMatrixFilterStatus();
         from.ValueChanged += (_, _) => SetMatrixFilterStatus();
         to.ValueChanged += (_, _) => SetMatrixFilterStatus();
-        cancel.Enabled = false;
-        cancel.Click += (_, _) => running?.Cancel();
+        cancel.Click += (_, _) =>
+        {
+            resumeAutomaticRefresh = false;
+            refreshOnIdle = false;
+            autoUpdate.Stop();
+            running?.Cancel();
+            absencePreload?.Cancel();
+            cancel.Enabled = false;
+        };
+        KeyPreview = true;
+        KeyDown += (_, args) =>
+        {
+            if (args.KeyData != Keys.Escape || !cancel.Available || !cancel.Enabled) return;
+            args.SuppressKeyPress = true;
+            cancel.PerformClick();
+        };
+        autoUpdate.Tick += (_, _) => RefreshVisibleInBackground();
         Shown += async (_, _) =>
         {
             PositionHeader();
@@ -165,13 +196,20 @@ internal sealed class MainForm : Form
         tabs.SelectedIndexChanged += async (_, _) =>
         {
             PositionHeader();
+            if (matrixCache.IsOpen && running != null) refreshOnIdle = true;
             if (running == null) ShowPageStatus();
             if (tabs.SelectedTab == settingsPage && !checkedUpdateOnce) await CheckForUpdateAsync();
-            if (tabs.SelectedTab == homePage && sessionReady && homeViews.Keys.Any(name => !loadedHome.Contains(name)))
+            if (tabs.SelectedTab == homePage && settings.StoreDataOnDevice && matrixCache.IsOpen)
+                await OpenCachedHomeAsync();
+            else if (tabs.SelectedTab == homePage && sessionReady && homeViews.Keys.Any(name => !loadedHome.Contains(name)))
                 await RunAsync(LoadHomeAsync);
+            else if (matrixCache.IsOpen && (tabs.SelectedTab == myClassesPage || tabs.SelectedTab == matrixPage))
+                RefreshVisibleInBackground();
         };
         FormClosing += (_, args) =>
         {
+            closing = true;
+            autoUpdate.Stop();
             if (running == null) return;
             args.Cancel = true;
             closeAfterCancellation = true;
@@ -181,6 +219,8 @@ internal sealed class MainForm : Form
         {
             homeAbsenceMenu?.Dispose();
             absencePreload?.Cancel();
+            autoUpdate.Dispose();
+            matrixCache.Dispose();
             updateCheckLifetime.Cancel();
             updateCheckLifetime.Dispose();
             browser.Dispose();
@@ -210,10 +250,10 @@ internal sealed class MainForm : Form
     private void BuildMatrix()
     {
         var refresh = ActionButton("Aktualisieren", primary: true);
-        refresh.Click += async (_, _) => await RunAsync(RefreshMatrixAsync);
+        refresh.Click += async (_, _) => await OpenRequestedMatrixAsync();
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             BackColor = MatrixView.Surface, Padding = new Padding(9, 5, 9, 5) };
-        toolbar.Controls.AddRange([Field("Klasse", classes), Field("Von", from), Field("Bis", to), refresh, cancel]);
+        toolbar.Controls.AddRange([Field("Klasse", classes), Field("Von", from), Field("Bis", to), refresh]);
         var upper = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 0, 12, 6) };
         upper.Controls.Add(matrixView);
         matrixPage.Controls.Add(WithDetails(upper, matrixDetails));
@@ -239,9 +279,13 @@ internal sealed class MainForm : Form
         });
         remember.Checked = settings.RememberLogin;
         hello.Checked = settings.ProtectWithHello;
+        storeData.Checked = settings.StoreDataOnDevice;
+        ShowStorageStatus();
         showLegend.Checked = settings.ShowLegend;
         remember.CheckedChanged += async (_, _) => await ChangeRememberLoginAsync();
         hello.CheckedChanged += async (_, _) => await ChangeHelloAsync();
+        storeData.CheckedChanged += async (_, _) => await ChangeDeviceStorageAsync();
+        unlockStore.Click += async (_, _) => await UnlockStoreAsync();
         showLegend.CheckedChanged += async (_, _) => await ChangeLegendAsync();
         classFilter.TextChanged += (_, _) => FillClassOptions();
         homeOptions.ItemCheck += (_, args) => SaveClassChoice(homeOptions, args, forHome: true);
@@ -258,7 +302,7 @@ internal sealed class MainForm : Form
         checkUpdate.Click += async (_, _) => await CheckForUpdateAsync();
         installUpdate.Click += async (_, _) => await RunAsync(InstallUpdateAsync);
         cancelUpdate.Visible = false;
-        cancelUpdate.Click += (_, _) => running?.Cancel();
+        cancelUpdate.Click += (_, _) => cancel.PerformClick();
         var releases = new LinkLabel { Text = "Releases auf GitHub", AutoSize = true, LinkColor = AppTheme.Accent };
         releases.LinkClicked += (_, _) => OpenWebsite(GitHubUpdates.ReleasesUrl);
         RefreshUpdateButtons();
@@ -283,6 +327,7 @@ internal sealed class MainForm : Form
             SettingsBlock("CSV-Download", csvDownload),
             SettingsBlock("Schuljahr auswählen", schoolYearPicker, schoolYearPeriod),
             SettingsBlock("Ansicht", showLegend),
+            SettingsBlock("Datenschutzmodus", storeData, storageStatus, unlockStore),
             SettingsBlock("WebUntis-Anmeldung", accountButtons, remember, rememberedLogin, hello)
         ]);
 
@@ -306,7 +351,8 @@ internal sealed class MainForm : Form
         layout.Controls.Add(left, 0, 0);
         layout.Controls.Add(choices, 1, 0);
         settingsPage.Controls.Add(layout);
-        busyControls.AddRange([signIn, signOut, reload, remember, hello, showLegend, classFilter, homeOptions, myClassOptions, schoolYearPicker, csvDownload]);
+        busyControls.AddRange([signIn, signOut, reload, remember, hello, storeData, unlockStore, showLegend, classFilter, homeOptions, myClassOptions,
+            schoolYearPicker, csvDownload]);
     }
 
     private void RefreshUpdateButtons()
@@ -427,7 +473,19 @@ internal sealed class MainForm : Form
 
     private async Task StartAsync()
     {
-        if (settings.ProtectWithHello)
+        if (settings.StoreDataOnDevice)
+        {
+            status.Text = "Windows Hello · Datenspeicher entsperren";
+            try { await matrixCache.UnlockAsync(Handle, updateCheckLifetime.Token); }
+            catch (OperationCanceledException) { }
+            catch (Exception error) when (StorageFailure(error) || error is InvalidOperationException)
+            {
+                if (!IsDisposed) storageStatus.Text = "Datenspeicher gesperrt. Du kannst ihn in den Einstellungen entsperren oder neu einrichten.";
+            }
+            if (IsDisposed || closing) return;
+            ShowStorageStatus();
+        }
+        if (settings.ProtectWithHello && !matrixCache.IsOpen)
         {
             status.Text = "Windows Hello · App entsperren";
             try
@@ -445,7 +503,17 @@ internal sealed class MainForm : Form
                 return;
             }
             if (IsDisposed) return;
-            tabs.Visible = true;
+        }
+        tabs.Visible = true;
+        if (matrixCache.IsOpen)
+        {
+            await OpenCachedHomeAsync();
+            return;
+        }
+        if (settings.StoreDataOnDevice)
+        {
+            ShowPageStatus();
+            return;
         }
         await RunAsync(LoadSessionAsync);
     }
@@ -453,7 +521,7 @@ internal sealed class MainForm : Form
     private async Task LoadSessionAsync(CancellationToken token, IProgress<string> progress)
     {
         await LoadClassesAsync(token, progress);
-        await LoadHomeAsync(token, progress);
+        await LoadHomeAsync(token, progress, refreshFromWeb: matrixCache.IsOpen);
     }
 
     private Task LoadClassesAsync(CancellationToken token, IProgress<string> progress) =>
@@ -604,12 +672,15 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task LoadHomeAsync(CancellationToken token, IProgress<string> progress)
+    private Task LoadHomeAsync(CancellationToken token, IProgress<string> progress) => LoadHomeAsync(token, progress, refreshFromWeb: false);
+
+    private async Task LoadHomeAsync(CancellationToken token, IProgress<string> progress, bool refreshFromWeb)
     {
-        var pendingClasses = settings.FavoriteClasses.Where(name => !loadedHome.Contains(name)).ToArray();
+        var pendingClasses = settings.FavoriteClasses.Where(name => refreshFromWeb || !loadedHome.Contains(name)).ToArray();
         if (pendingClasses.Length == 0) return;
         var elapsed = Stopwatch.StartNew();
         var failed = 0;
+        var retained = 0;
         var stepsPerMatrix = MatrixLoadSteps;
         var total = pendingClasses.Length * stepsPerMatrix;
         ShowProgress(0, total);
@@ -620,61 +691,174 @@ internal sealed class MainForm : Form
             var view = homeViews[name];
             var range = schoolYear;
             var completedBefore = index * stepsPerMatrix;
-            view.SetStatus($"{name}   ·   Wird geladen …");
+            if (view.CurrentMatrix == null) view.SetStatus($"{name}   ·   Wird geladen …");
             var classProgress = new Progress<string>(message => progress.Report($"{name} · {message}"));
             try
             {
-                view.SetMatrix(await GetSchoolYearMatrixAsync(name, range, classProgress, token,
+                var next = await GetSchoolYearMatrixAsync(name, range, classProgress, token,
                     (completed, _) =>
                     {
                         if (completed > 0 && completed < stepsPerMatrix)
                             ShowProgress(completedBefore + completed, total);
-                    }));
-                loadedHome.Add(name);
+                    }, refreshFromWeb);
+                ApplyFreshMatrix(RequireCompleteIfKeeping(next, view), isSchoolYear: true);
             }
             catch (OperationCanceledException)
             {
-                view.SetStatus($"{name}   ·   Abruf abgebrochen");
+                if (view.CurrentMatrix == null) view.SetStatus($"{name}   ·   Abruf abgebrochen");
                 throw;
             }
             catch (Exception error)
             {
-                view.SetStatus($"{name}   ·   {error.Message.Split('\n')[0].Trim()}");
+                if (view.CurrentMatrix == null) view.SetStatus($"{name}   ·   {error.Message.Split('\n')[0].Trim()}");
+                else retained++;
+                if (backgroundRefresh && !browser.SessionConfirmed) throw;
                 failed++;
             }
             ShowProgress(completedBefore + stepsPerMatrix, total);
         }
         SetPageStatus(homePage, failed == 0 ? $"{loadedHome.Count} Klassen auf der Startseite · Abruf {elapsed.Elapsed.TotalSeconds:0.0} s" :
-            $"{loadedHome.Count} Klassen geladen · {failed} Abrufe fehlgeschlagen.");
+            $"{loadedHome.Count} Klassen sichtbar · {failed} Abrufe fehlgeschlagen" + (retained > 0 ? $" · {retained} bisherige Stände beibehalten." : "."));
     }
 
-    private async Task OpenMyClassAsync(string name, CancellationToken token, IProgress<string> progress)
+    private async Task OpenMyClassAsync(string name)
     {
+        if (running != null && !backgroundRefresh) return;
+        resumeAutomaticRefresh = true;
         var range = schoolYear;
         SelectMyClass(name);
-        myClassView.SetStatus($"{name}   ·   Wird geladen …");
-        myClassDetails.ShowDetails(DayDetails.Empty);
-        try
+        var current = myClassView.CurrentMatrix;
+        var keepPosition = current != null && ClassComparer.Equals(current.ClassName, name) && current.From == range.From;
+        if (!keepPosition)
         {
-            var result = await GetSchoolYearMatrixAsync(name, range, progress, token, ShowProgress);
-            myClassView.SetMatrix(result);
-            sessionReady = true;
-            SetPageStatus(myClassesPage, $"{name} · Tagesmatrix geöffnet");
+            myClassView.SetStatus($"{name}   ·   Wird geladen …");
+            myClassDetails.ShowDetails(DayDetails.Empty);
         }
-        catch
+        schoolYearMatrices.TryGetValue(name, out var inMemory);
+        var home = homeViews.GetValueOrDefault(name);
+        var inheritedFromDevice = inMemory == null && home?.IsShowingDeviceCopy == true;
+        if (inheritedFromDevice) inMemory = home!.CurrentMatrix;
+        var stored = matrixCache.IsOpen && !keepPosition && inMemory == null ? await ReadCachedMatrixAsync(name, range, schoolYearRequest: true) : null;
+        if (IsDisposed || closing || !ClassComparer.Equals(name, openedMyClass) || range != schoolYear) return;
+        if (stored != null && myClassView.CurrentMatrix == null)
+            myClassDetails.ShowDetails(myClassView.SetMatrix(stored, fromDevice: true));
+        else if (!keepPosition && inMemory != null) myClassDetails.ShowDetails(myClassView.SetMatrix(inMemory, fromDevice: inheritedFromDevice));
+        if (matrixCache.IsOpen && myClassView.CurrentMatrix != null)
         {
-            ResetMyClass();
-            throw;
+            SetPageStatus(myClassesPage, $"{name} · Matrix geöffnet");
+            RefreshVisibleInBackground();
+            return;
         }
+        await RunAsync(async (token, progress) =>
+        {
+            if (!ClassComparer.Equals(openedMyClass, name) || range != schoolYear) return;
+            try
+            {
+                var result = await GetSchoolYearMatrixAsync(name, range, progress, token, ShowProgress);
+                myClassDetails.ShowDetails(myClassView.SetMatrix(result, keepPosition));
+                sessionReady = true;
+                SetPageStatus(myClassesPage, $"{name} · Tagesmatrix geöffnet");
+            }
+            catch
+            {
+                if (myClassView.CurrentMatrix == null) ResetMyClass();
+                throw;
+            }
+        });
     }
 
     private async Task<AttendanceMatrix> GetSchoolYearMatrixAsync(string name, ReportRange range, IProgress<string> progress,
-        CancellationToken token, Action<int, int>? reportProgress = null)
+        CancellationToken token, Action<int, int>? reportProgress = null, bool refreshFromWeb = false)
     {
-        if (schoolYearMatrices.TryGetValue(name, out var cached)) return cached;
-        var result = await ReadMatrixAsync(name, ThroughToday(range), progress, token, reportProgress);
+        if (!refreshFromWeb && schoolYearMatrices.TryGetValue(name, out var cached)) return cached;
+        var result = await ReadMatrixAsync(name, ThroughToday(range), progress, token, reportProgress, storageSchoolYear: range);
         if (result.HasAbsenceReport && result.HasLatenessReport && result.HasTimetable) schoolYearMatrices[name] = result;
         return result;
+    }
+
+    private async Task<AttendanceMatrix?> ReadCachedMatrixAsync(string name, ReportRange range, bool schoolYearRequest)
+    {
+        try { return await matrixCache.ReadAsync(name, range, schoolYearRequest, updateCheckLifetime.Token); }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception error) when (StorageFailure(error))
+        {
+            if (!IsDisposed) storageStatus.Text = "Ein gespeicherter Datenstand konnte nicht geöffnet werden. WebUntis wird erneut abgefragt.";
+            return null;
+        }
+    }
+
+    private async Task OpenCachedHomeAsync()
+    {
+        if (closing || !matrixCache.IsOpen) return;
+        resumeAutomaticRefresh = true;
+        await LoadCachedHomeViewsAsync();
+        RefreshVisibleInBackground();
+    }
+
+    private void ApplyHomeMatrix(MatrixView view, AttendanceMatrix matrix, bool fromDevice = false)
+    {
+        var details = view.SetMatrix(matrix, keepPosition: view.CurrentMatrix != null, fromDevice: fromDevice);
+        if (details != DayDetails.Empty) homeDetails.ShowDetails(details);
+        loadedHome.Add(matrix.ClassName);
+    }
+
+    private static AttendanceMatrix RequireCompleteIfKeeping(AttendanceMatrix matrix, MatrixView view)
+    {
+        if (!IsComplete(matrix) && view.CurrentMatrix is { } previous && IsComplete(previous))
+            throw new InvalidDataException("WebUntis hat keinen vollständigen neuen Datenstand geliefert. Der letzte vollständige Stand bleibt sichtbar.");
+        return matrix;
+    }
+
+    private static bool IsComplete(AttendanceMatrix matrix) =>
+        matrix.HasAbsenceReport && matrix.HasLatenessReport && matrix.HasTimetable;
+
+    private void RefreshVisibleInBackground()
+    {
+        if (!matrixCache.IsOpen || closing || IsDisposed || !resumeAutomaticRefresh) return;
+        if (running != null || waitingForBackground != 0)
+        {
+            refreshOnIdle = true;
+            return;
+        }
+        var page = tabs.SelectedTab;
+        var opened = openedMyClass;
+        var request = matrixRequest;
+        if (page != homePage && (page != myClassesPage || opened == null) && (page != matrixPage || request == null)) return;
+        if (page == homePage && homeViews.Count == 0 && sessionReady) return;
+        refreshOnIdle = false;
+        backgroundTask = RefreshAsync();
+
+        async Task RefreshAsync()
+        {
+            await RunAsync(async (token, progress) =>
+            {
+                if (!sessionReady || !browser.SessionConfirmed)
+                {
+                    await LoadClassesAsync(token, progress);
+                    if (page == homePage) await LoadCachedHomeViewsAsync();
+                }
+                if (page == homePage) await LoadHomeAsync(token, progress, refreshFromWeb: true);
+                else if (page == myClassesPage && opened != null && ClassComparer.Equals(opened, openedMyClass))
+                {
+                    var updated = await GetSchoolYearMatrixAsync(opened, schoolYear, progress, token, ShowProgress, refreshFromWeb: true);
+                    ApplyFreshMatrix(RequireCompleteIfKeeping(updated, myClassView), isSchoolYear: true);
+                    SetPageStatus(myClassesPage, $"{opened} · Aus WebUntis aktualisiert");
+                }
+                else if (page == matrixPage && request != null) await RefreshRequestedMatrixAsync(request, token, progress);
+            }, background: true);
+        }
+    }
+
+    private async Task LoadCachedHomeViewsAsync()
+    {
+        var range = schoolYear;
+        foreach (var (name, view) in homeViews.ToArray())
+        {
+            if (view.CurrentMatrix != null) continue;
+            var stored = await ReadCachedMatrixAsync(name, range, schoolYearRequest: true);
+            if (closing || !matrixCache.IsOpen || range != schoolYear) return;
+            if (stored != null && !view.IsDisposed && view.CurrentMatrix == null) ApplyHomeMatrix(view, stored, fromDevice: true);
+        }
     }
 
     private static ReportRange ThroughToday(ReportRange range)
@@ -683,41 +867,79 @@ internal sealed class MainForm : Form
         return range.Contains(today) ? range with { To = today } : range;
     }
 
-    private async Task RefreshMatrixAsync(CancellationToken token, IProgress<string> progress)
+    private async Task OpenRequestedMatrixAsync()
     {
+        if (running != null && !backgroundRefresh) return;
+        resumeAutomaticRefresh = true;
         var name = classes.Text.Trim();
-        if (name.Length == 0) throw new InvalidOperationException("Wähle eine Klasse oder gib ihr Kürzel ein.");
         var range = CurrentDates();
-        if (range.From > range.To) throw new InvalidOperationException("Das Startdatum liegt hinter dem Enddatum.");
-        if (!range.IsValid()) throw new InvalidOperationException("Wähle höchstens ein Schuljahr pro Abruf.");
-
-        var elapsed = Stopwatch.StartNew();
-        var result = await ReadMatrixAsync(name, range, progress, token, ShowProgress);
-        sessionReady = true;
-        matrixDetails.ShowDetails(DayDetails.Empty);
-        matrixView.SetMatrix(result);
-        if (range == schoolYear)
+        var error = name.Length == 0 ? "Wähle eine Klasse oder gib ihr Kürzel ein." : range.From > range.To
+            ? "Das Startdatum liegt hinter dem Enddatum." : !range.IsValid() ? "Wähle höchstens ein Schuljahr pro Abruf." : null;
+        if (error != null)
         {
-            if (result.HasAbsenceReport && result.HasLatenessReport && result.HasTimetable) schoolYearMatrices[name] = result;
-            else schoolYearMatrices.Remove(name);
-            if (homeViews.TryGetValue(name, out var home))
+            MessageBox.Show(this, error, Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var request = new MatrixRequest(name, range);
+        if (!Equals(matrixRequest, request))
+        {
+            matrixRequest = request;
+            matrixView.SetStatus($"{name}   ·   Wird geladen …");
+            matrixDetails.ShowDetails(DayDetails.Empty);
+        }
+        if (matrixCache.IsOpen && matrixView.CurrentMatrix == null)
+        {
+            var stored = await ReadCachedMatrixAsync(name, range, schoolYearRequest: false);
+            if (stored == null && range == schoolYear)
+                stored = await ReadCachedMatrixAsync(name, range, schoolYearRequest: true);
+            if (closing || matrixRequest != request) return;
+            if (stored != null && matrixView.CurrentMatrix == null)
+                matrixDetails.ShowDetails(matrixView.SetMatrix(stored, fromDevice: true));
+            else if (matrixView.CurrentMatrix == null)
             {
-                home.SetMatrix(result);
-                loadedHome.Add(name);
-                homeDetails.ShowDetails(DayDetails.Empty);
-            }
-            if (ClassComparer.Equals(openedMyClass, name))
-            {
-                myClassView.SetMatrix(result);
-                myClassDetails.ShowDetails(DayDetails.Empty);
+                var exact = range == schoolYear ? ThroughToday(range) : range;
+                if (schoolYearMatrices.TryGetValue(name, out var current) && exact == new ReportRange(current.From, current.To))
+                    matrixDetails.ShowDetails(matrixView.SetMatrix(current));
             }
         }
-        tabs.SelectedTab = matrixPage;
+
+        // The explicit refresh action may show the WebUntis login dialog. A stored matrix stays visible during the request.
+        await RunAsync((token, progress) => RefreshRequestedMatrixAsync(request, token, progress));
+    }
+
+    private async Task RefreshRequestedMatrixAsync(MatrixRequest request, CancellationToken token, IProgress<string> progress)
+    {
+        if (matrixRequest != request) return;
+        var (name, range) = request;
+        var elapsed = Stopwatch.StartNew();
+        var result = RequireCompleteIfKeeping(await ReadMatrixAsync(name, range, progress, token, ShowProgress), matrixView);
+        sessionReady = true;
+        ApplyFreshMatrix(result, isSchoolYear: range == schoolYear);
         SetPageStatus(matrixPage, $"{name} · Aktualisiert um {DateTime.Now:HH:mm} Uhr · Abruf {elapsed.Elapsed.TotalSeconds:0.0} s");
     }
 
+    private void ApplyFreshMatrix(AttendanceMatrix result, bool isSchoolYear, bool allowPartial = false)
+    {
+        var name = result.ClassName;
+        var range = new ReportRange(result.From, result.To);
+        if (isSchoolYear)
+        {
+            if (IsComplete(result)) schoolYearMatrices[name] = result;
+            if (homeViews.TryGetValue(name, out var home) && CanReplace(home))
+                ApplyHomeMatrix(home, result);
+            if (ClassComparer.Equals(openedMyClass, name) && CanReplace(myClassView))
+                myClassDetails.ShowDetails(myClassView.SetMatrix(result, keepPosition: myClassView.CurrentMatrix != null));
+        }
+        if (matrixRequest is { } request && ClassComparer.Equals(request.Name, name) && request.Range == range &&
+            CanReplace(matrixView))
+            matrixDetails.ShowDetails(matrixView.SetMatrix(result, keepPosition: matrixView.CurrentMatrix != null));
+
+        bool CanReplace(MatrixView target) => allowPartial || IsComplete(result) || target.CurrentMatrix is not { } old || !IsComplete(old);
+    }
+
     private async Task<AttendanceMatrix> ReadMatrixAsync(string name, ReportRange range, IProgress<string> progress,
-        CancellationToken token, Action<int, int>? reportProgress = null, bool afterExcuse = false)
+        CancellationToken token, Action<int, int>? reportProgress = null, bool afterExcuse = false, ReportRange? storageSchoolYear = null)
     {
         var steps = MatrixLoadSteps;
         reportProgress?.Invoke(0, steps);
@@ -733,7 +955,7 @@ internal sealed class MainForm : Form
             : Task.FromResult<AbsenceNote[]?>(null);
         try
         {
-            return await ParseMatrixAsync(name, range, batch, preparedNotes, progress, token, reportProgress, afterExcuse);
+            return await ParseMatrixAsync(name, range, batch, preparedNotes, progress, token, reportProgress, afterExcuse, storageSchoolYear);
         }
         finally
         {
@@ -745,7 +967,7 @@ internal sealed class MainForm : Form
 
     private async Task<AttendanceMatrix> ParseMatrixAsync(string name, ReportRange range, ReportBatch batch,
         Task<AbsenceNote[]?> preparedNotes, IProgress<string> progress, CancellationToken token,
-        Action<int, int>? reportProgress, bool afterExcuse)
+        Action<int, int>? reportProgress, bool afterExcuse, ReportRange? storageSchoolYear)
     {
         progress.Report("Berichte werden ausgewertet …");
         var reports = batch.EmptyReports.Select(kind => new Report(kind, [], [], [])).ToList();
@@ -825,9 +1047,20 @@ internal sealed class MainForm : Form
         var absenceNotes = await notes;
         var schoolPeriods = await periods;
         token.ThrowIfCancellationRequested();
-        var matrix = await Task.Run(() => new AttendanceMatrix(name, range.From, range.To, batch.Students,
-            reports.Append(new Report(ReportKind.Timetable, [], [], batch.Notes.ToArray(), Complete: false)),
-            absenceNotes: absenceNotes, schoolPeriods: schoolPeriods, classId: batch.ClassId), token);
+        var data = new MatrixData(name, batch.ClassId, range, DateTimeOffset.UtcNow, batch.Students,
+            [.. reports, new Report(ReportKind.Timetable, [], [], batch.Notes.ToArray(), Complete: false)], absenceNotes, schoolPeriods);
+        var matrix = await Task.Run(data.Build, token);
+        if (matrixCache.IsOpen && matrix.ClassId.Length > 0 && IsComplete(matrix))
+        {
+            try
+            {
+                await matrixCache.SaveAsync(data, storageSchoolYear, token);
+            }
+            catch (Exception error) when (StorageFailure(error))
+            {
+                storageStatus.Text = "Die neuen Daten sind sichtbar. Der verschlüsselte Stand konnte gerade nicht gespeichert werden.";
+            }
+        }
         reportProgress?.Invoke(MatrixLoadSteps, MatrixLoadSteps);
         return matrix;
 
@@ -886,10 +1119,10 @@ internal sealed class MainForm : Form
     private async void OpenHomeAbsence(MatrixView source, AttendanceMatrix matrix, Student student, DateOnly day,
         Point position, bool direct)
     {
-        if (running != null || !IsCurrent()) return;
+        if ((running != null && !backgroundRefresh) || !IsCurrent()) return;
         homeAbsenceMenu?.Close();
         await Task.Yield();
-        if (running != null || !IsCurrent()) return;
+        if ((running != null && !backgroundRefresh) || !IsCurrent()) return;
         if (browser.PreparedAbsenceActions(matrix, student, day) is { Length: > 0 } rows)
         {
             var available = Available(rows);
@@ -903,6 +1136,7 @@ internal sealed class MainForm : Form
         menu?.Show(position);
         await RunAsync(async (token, progress) =>
         {
+            if (!IsCurrent() || menu is { Visible: false }) return;
             using var lookup = CancellationTokenSource.CreateLinkedTokenSource(token);
             ToolStripDropDownClosedEventHandler closed = (_, _) => lookup.Cancel();
             if (menu != null) menu.Closed += closed;
@@ -982,6 +1216,7 @@ internal sealed class MainForm : Form
 
         async Task EditAsync(AbsenceListEntry row, CancellationToken token, IProgress<string> progress)
         {
+            if (!IsCurrent()) return;
             absencePreload?.Cancel();
             var saved = await browser.ShowExcuseAsync(matrix, student, day, row, progress, token);
             if (saved) await ReloadEditedClassAsync(source, matrix, token, progress);
@@ -991,31 +1226,34 @@ internal sealed class MainForm : Form
     private async Task ReloadEditedClassAsync(MatrixView source, AttendanceMatrix previous,
         CancellationToken token, IProgress<string> progress)
     {
+        resumeAutomaticRefresh = true;
         var name = previous.ClassName;
-        var range = new ReportRange(previous.From, previous.To);
+        var currentYear = previous.From == schoolYear.From && previous.To <= schoolYear.To;
+        var range = currentYear && matrixCache.IsOpen ? ThroughToday(schoolYear) : new ReportRange(previous.From, previous.To);
         var regularMatrix = matrixView.CurrentMatrix;
         loadedHome.Remove(name);
         schoolYearMatrices.Remove(name);
+        if (settings.StoreDataOnDevice)
+        {
+            try { matrixCache.ForgetClass(name); }
+            catch (Exception error) when (StorageFailure(error))
+            {
+                storageStatus.Text = "Ein älterer gespeicherter Datenstand konnte nicht entfernt werden.";
+            }
+            source.MarkForRefresh();
+            if (ClassComparer.Equals(openedMyClass, name)) myClassView.MarkForRefresh();
+            if (regularMatrix?.ClassId == previous.ClassId) matrixView.MarkForRefresh();
+        }
         progress.Report($"{name} · Fehlzeiten werden neu gelesen …");
-        var updated = await ReadMatrixAsync(name, range, progress, token, ShowProgress, afterExcuse: true);
+        var updated = await ReadMatrixAsync(name, range, progress, token, ShowProgress, afterExcuse: true,
+            storageSchoolYear: currentYear ? schoolYear : null);
         if (!updated.HasAbsenceReport)
             throw new InvalidOperationException("Die aktuellen Fehlzeiten konnten nach dem Speichern nicht gelesen werden. Rufe die Klasse erneut ab.");
-        if (updated.HasAbsenceReport && updated.HasLatenessReport && updated.HasTimetable)
-            schoolYearMatrices[name] = updated;
-        loadedHome.Add(name);
-        if (ClassComparer.Equals(openedMyClass, name))
-        {
-            myClassDetails.ShowDetails(myClassView.SetMatrix(updated, keepPosition: true));
-        }
-        if (regularMatrix?.ClassId == previous.ClassId && SchoolYears.StartYear(regularMatrix.From) == SchoolYears.StartYear(previous.From))
-        {
-            if (regularMatrix.From == updated.From && regularMatrix.To == updated.To)
-            {
-                matrixDetails.ShowDetails(matrixView.SetMatrix(updated, keepPosition: true));
-            }
-            else ResetMatrix();
-        }
-        homeDetails.ShowDetails(source.SetMatrix(updated, keepPosition: true));
+        ApplyFreshMatrix(updated, isSchoolYear: true, allowPartial: true);
+        if (source.CurrentMatrix != updated)
+            homeDetails.ShowDetails(source.SetMatrix(updated, keepPosition: true));
+        if (regularMatrix?.ClassId == previous.ClassId && matrixView.CurrentMatrix == regularMatrix &&
+            SchoolYears.StartYear(regularMatrix.From) == SchoolYears.StartYear(previous.From)) ResetMatrix();
         SetPageStatus(homePage, $"{name} · Aktuelle Fehlzeiten aus WebUntis geladen");
     }
 
@@ -1023,8 +1261,8 @@ internal sealed class MainForm : Form
     {
         if (!sessionReady || closeAfterCancellation || IsDisposed) return;
         absencePreload?.Cancel();
-        var matrices = homeViews.Values.Select(view => view.CurrentMatrix).OfType<AttendanceMatrix>()
-            .Where(matrix => !matrix.IsDemo && matrix.ClassId.Length > 0).ToArray();
+        var matrices = homeViews.Values.Where(view => !view.IsShowingDeviceCopy).Select(view => view.CurrentMatrix)
+            .OfType<AttendanceMatrix>().Where(matrix => !matrix.IsDemo && matrix.ClassId.Length > 0).ToArray();
         browser.KeepPreparedAbsences(matrices);
         if (matrices.Length > 0) _ = PreloadAsync();
 
@@ -1058,7 +1296,7 @@ internal sealed class MainForm : Form
             button.FlatAppearance.CheckedBackColor = AppTheme.TintPressed;
             button.FlatAppearance.BorderColor = AppTheme.Line;
             button.FlatAppearance.MouseOverBackColor = AppTheme.Tint;
-            button.Click += async (_, _) => await RunAsync((token, progress) => OpenMyClassAsync(name, token, progress));
+            button.Click += async (_, _) => await OpenMyClassAsync(name);
             myClassButtons.Controls.Add(button);
         }
         if (openedMyClass != null && !(settings.MyClasses ?? []).Contains(openedMyClass, ClassComparer)) ResetMyClass();
@@ -1090,6 +1328,7 @@ internal sealed class MainForm : Form
 
     private void ResetMatrix()
     {
+        matrixRequest = null;
         matrixView.SetStatus("Wähle eine Klasse und klicke auf Aktualisieren.");
         matrixDetails.ShowDetails(DayDetails.Empty);
         SetMatrixFilterStatus();
@@ -1113,9 +1352,113 @@ internal sealed class MainForm : Form
     private async Task SignOutAsync(CancellationToken token, IProgress<string> progress)
     {
         ClearSessionViews();
-        await browser.SignOutAsync(token);
+        try { await browser.SignOutAsync(token); }
+        finally
+        {
+            if (settings.StoreDataOnDevice)
+            {
+                try
+                {
+                    await matrixCache.ClearAsync();
+                    SaveSettings(settings with { StoreDataOnDevice = false });
+                }
+                finally
+                {
+                    SyncAccountChoices();
+                    ShowStorageStatus();
+                }
+            }
+        }
         SetPageStatus(settingsPage, "In der App von WebUntis abgemeldet.");
     }
+
+    private async Task ChangeDeviceStorageAsync()
+    {
+        if (updatingSettings || storeData.Checked == settings.StoreDataOnDevice) return;
+        var requested = storeData.Checked;
+        await RunAsync(async (token, progress) =>
+        {
+            HideProgress();
+            if (requested)
+            {
+                resumeAutomaticRefresh = true;
+                progress.Report("Windows Hello · Lokalen Datenspeicher einrichten …");
+                await matrixCache.CreateAsync(Handle, token);
+                try { SaveSettings(settings with { StoreDataOnDevice = true }); }
+                catch
+                {
+                    await matrixCache.ClearAsync();
+                    throw;
+                }
+                SetPageStatus(settingsPage, "Daten werden verschlüsselt auf diesem Gerät gespeichert.");
+                ShowStorageStatus();
+                if (sessionReady)
+                {
+                    if (openedMyClass is { } opened && !homeViews.ContainsKey(opened))
+                        ApplyFreshMatrix(await GetSchoolYearMatrixAsync(opened, schoolYear, progress, token, ShowProgress,
+                            refreshFromWeb: true), isSchoolYear: true);
+                    if (matrixRequest is { } requestedMatrix && (requestedMatrix.Range != ThroughToday(schoolYear) ||
+                        (!homeViews.ContainsKey(requestedMatrix.Name) && !ClassComparer.Equals(requestedMatrix.Name, openedMyClass))))
+                        await RefreshRequestedMatrixAsync(requestedMatrix, token, progress);
+                    await LoadHomeAsync(token, progress, refreshFromWeb: true);
+                }
+            }
+            else
+            {
+                autoUpdate.Stop();
+                ClearDeviceCopiesOnScreen();
+                await matrixCache.ClearAsync();
+                SaveSettings(settings with { StoreDataOnDevice = false });
+                SetPageStatus(settingsPage, "Der lokale Datenspeicher wurde gelöscht.");
+            }
+            ShowStorageStatus();
+        });
+        if (!IsDisposed && !closing)
+        {
+            SyncAccountChoices();
+            ShowStorageStatus();
+        }
+    }
+
+    private void ShowStorageStatus()
+    {
+        unlockStore.Visible = settings.StoreDataOnDevice && !matrixCache.IsOpen;
+        storageStatus.Text = matrixCache.IsOpen ? "Mit Windows Hello entsperrt · verschlüsselte Speicherung" : settings.StoreDataOnDevice
+            ? "Datenspeicher gesperrt."
+            : "Optionaler Datenspeicher · geschützt mit Windows Hello";
+    }
+
+    private async Task UnlockStoreAsync()
+    {
+        if (!settings.StoreDataOnDevice || matrixCache.IsOpen) return;
+        await RunAsync(async (token, progress) =>
+        {
+            HideProgress();
+            progress.Report("Windows Hello · Datenspeicher entsperren …");
+            await matrixCache.UnlockAsync(Handle, token);
+            resumeAutomaticRefresh = true;
+            ShowStorageStatus();
+            SetPageStatus(settingsPage, "Datenspeicher entsperrt.");
+        });
+    }
+
+    private void ClearDeviceCopiesOnScreen()
+    {
+        foreach (var (name, view) in homeViews)
+        {
+            if (!view.IsShowingDeviceCopy) continue;
+            view.SetStatus(name);
+            loadedHome.Remove(name);
+            homeDetails.ShowDetails(DayDetails.Empty);
+        }
+        if (myClassView.IsShowingDeviceCopy) ResetMyClass();
+        if (matrixView.IsShowingDeviceCopy) ResetMatrix();
+    }
+
+    private static bool StorageFailure(Exception error) => error is IOException or UnauthorizedAccessException or
+        InvalidDataException or CryptographicException or JsonException or System.Runtime.InteropServices.COMException or EntryPointNotFoundException;
+
+    private sealed record MatrixRequest(string Name, ReportRange Range);
 
     private async Task ChangeRememberLoginAsync()
     {
@@ -1181,6 +1524,7 @@ internal sealed class MainForm : Form
         {
             remember.Checked = settings.RememberLogin;
             hello.Checked = settings.ProtectWithHello;
+            storeData.Checked = settings.StoreDataOnDevice;
         }
         finally { updatingSettings = false; }
         UpdateRememberedLoginStatus();
@@ -1245,7 +1589,7 @@ internal sealed class MainForm : Form
         {
             homeDetails.ShowDetails(DayDetails.Empty);
             SynchronizeHomeViews();
-            PreloadHomeAbsences();
+            if (running == null) PreloadHomeAbsences();
         }
         else
         {
@@ -1268,16 +1612,31 @@ internal sealed class MainForm : Form
         to.Value = range.To.ToDateTime(TimeOnly.MinValue);
     }
 
-    private async Task RunAsync(Func<CancellationToken, IProgress<string>, Task> action, bool keepAbsencePreload = false)
+    private async Task RunAsync(Func<CancellationToken, IProgress<string>, Task> action, bool keepAbsencePreload = false,
+        bool background = false)
     {
-        if (running != null || IsDisposed) return;
+        if (!background && backgroundRefresh && backgroundTask is { } pending)
+        {
+            waitingForBackground++;
+            try
+            {
+                running?.Cancel();
+                await pending;
+            }
+            finally { waitingForBackground--; }
+        }
+        if (running != null || IsDisposed || closing) return;
         var initiatingPage = tabs.SelectedTab;
         using var cancellation = new CancellationTokenSource();
+        if (!background) refreshOnIdle = false;
+        autoUpdate.Stop();
         running = cancellation;
+        backgroundRefresh = background;
+        browser.AllowLoginPrompt = !background;
         if (!keepAbsencePreload) absencePreload?.Cancel();
-        busyControls.ForEach(control => control.Enabled = false);
+        if (!background) busyControls.ForEach(control => control.Enabled = false);
+        else schoolYearPicker.Enabled = false;
         RefreshUpdateButtons();
-        cancel.Enabled = true;
         status.Text = "Bitte warten …";
         ShowIndeterminateProgress();
         var progress = new Progress<string>(message =>
@@ -1287,26 +1646,46 @@ internal sealed class MainForm : Form
         try { await action(cancellation.Token, progress); }
         catch (OperationCanceledException)
         {
-            if (initiatingPage != null) SetPageStatus(initiatingPage, "Vorgang abgebrochen.");
+            if (initiatingPage != null && waitingForBackground == 0) SetPageStatus(initiatingPage, "Vorgang abgebrochen.");
         }
+        catch (Exception) when (closing || cancellation.IsCancellationRequested && waitingForBackground > 0) { }
         catch (Exception error)
         {
-            status.Text = "Vorgang nicht abgeschlossen.";
-            if (initiatingPage != null) SetPageStatus(initiatingPage, status.Text);
-            HideProgress();
-            MessageBox.Show(this, error.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (background)
+            {
+                if (initiatingPage != null) SetPageStatus(initiatingPage, browser.SessionConfirmed
+                    ? "Aktualisierung derzeit nicht möglich. Der letzte Datenstand bleibt sichtbar."
+                    : "Aktualisierung derzeit nicht möglich. Prüfe die Verbindung oder melde dich bei WebUntis an.");
+            }
+            else
+            {
+                status.Text = "Vorgang nicht abgeschlossen.";
+                if (initiatingPage != null) SetPageStatus(initiatingPage, status.Text);
+                HideProgress();
+                MessageBox.Show(this, error.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
         finally
         {
             running = null;
+            backgroundRefresh = false;
+            browser.AllowLoginPrompt = true;
             HideProgress();
-            cancel.Enabled = false;
-            busyControls.ForEach(control => control.Enabled = true);
+            if (!background) busyControls.ForEach(control => control.Enabled = true);
+            else schoolYearPicker.Enabled = true;
             RefreshUpdateButtons();
             UpdateRememberedLoginStatus();
             ShowPageStatus();
             if (closeAfterCancellation) Close();
-            else if (!keepAbsencePreload || absencePreload == null || absencePreload.IsCancellationRequested) PreloadHomeAbsences();
+            else if (waitingForBackground == 0 && !cancellation.IsCancellationRequested)
+            {
+                if (matrixCache.IsOpen && resumeAutomaticRefresh)
+                {
+                    autoUpdate.Start();
+                    if (refreshOnIdle) BeginInvoke(RefreshVisibleInBackground);
+                }
+                if (!keepAbsencePreload || absencePreload == null || absencePreload.IsCancellationRequested) PreloadHomeAbsences();
+            }
         }
     }
 
@@ -1323,6 +1702,7 @@ internal sealed class MainForm : Form
         loadingCount.Visible = false;
         loading.Style = ProgressBarStyle.Marquee;
         loading.Visible = true;
+        ShowTransferCancel();
     }
 
     private void ShowProgress(int completed, int total)
@@ -1334,12 +1714,21 @@ internal sealed class MainForm : Form
         loadingCount.Text = $"{completed}/{total}";
         loadingCount.Visible = true;
         loading.Visible = true;
+        ShowTransferCancel();
+    }
+
+    private void ShowTransferCancel()
+    {
+        cancel.Size = new Size(LogicalToDeviceUnits(25), LogicalToDeviceUnits(24));
+        cancel.Enabled = running?.IsCancellationRequested == false;
+        cancel.Visible = running != null;
     }
 
     private void HideProgress()
     {
         loading.Visible = false;
         loadingCount.Visible = false;
+        cancel.Visible = false;
     }
 
     private static SplitContainer WithDetails(Control upper, DetailsView details)

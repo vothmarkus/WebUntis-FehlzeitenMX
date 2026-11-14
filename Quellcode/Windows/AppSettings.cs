@@ -26,6 +26,7 @@ internal sealed record AppSettings
     public string? CsvDownloadFolder { get; init; }
     public bool RememberLogin { get; init; }
     public bool ProtectWithHello { get; init; }
+    public bool StoreDataOnDevice { get; init; }
     public bool ShowLegend { get; init; } = true;
 
     public static string[] ClassList(IEnumerable<string?> values) => values

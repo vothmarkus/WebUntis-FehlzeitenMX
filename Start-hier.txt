@@ -1,5 +1,5 @@
 WebUntis-FehlzeitenMX
-Windows x64 · Version 2.9
+Windows x64 · Version 3.0
 
 INSTALLIEREN UND AKTUALISIEREN
 1. Das Setup ausführen. Es schließt die bisherige App beim Installieren.
@@ -35,8 +35,8 @@ Das Menü in WebUntis bestimmt, welche Jahre verfügbar sind.
 
 TAGESMATRIX UND TAGESDETAILS
 Die Tagesmatrix bietet Klassenauswahl und einen frei einstellbaren
-Zeitraum. Aktualisieren ruft die Berichte neu ab. Mit Abbruch lässt
-sich ein laufender Abruf stoppen.
+Zeitraum. «Aktualisieren» ruft die Berichte neu ab. Das rote ×
+neben dem Ladebalken unten rechts stoppt einen laufenden Abruf.
 Der Ladebalken unten rechts zeigt beim Laden der Klassenliste
 Aktivität. Auf der Startseite zählt er pro Matrix vier Schritte
 für die Abrufe und die Auswertung. Bei zwei Matrizen sind es acht
@@ -105,10 +105,18 @@ Microsoft Edge WebView2 Runtime, lädt das Setup sie über das
 Microsoft-Installationsprogramm. Dieser Schritt braucht eine
 Internetverbindung.
 
-Berichte für die Auswertung bleiben im Arbeitsspeicher. Die App
-schreibt nur auf ausdrücklichen Wunsch die Namens-CSV. Einstellungen
-und die optional gemerkte Sitzung liegen unter
-%LOCALAPPDATA%\WebUntis-Auswertung.
+Ohne lokale Speicherung bleiben die Berichte für die Auswertung im
+Arbeitsspeicher. Unter Einstellungen → Datenschutzmodus kannst du
+«Daten auf dem Gerät speichern» aktivieren. Die App speichert dann
+vollständige Matrizen mit Tagesdetails und Abrufzeitpunkt. Sie
+verschlüsselt die Daten mit AES-256-GCM und leitet den Schlüssel
+beim Entsperren über einen gerätegebundenen Windows-Hello-Passkey ab.
+Dafür ist Windows 11 ab 24H2 mit PRF-Unterstützung nötig. Die App
+zeigt nach dem Entsperren zunächst den gespeicherten Stand und
+aktualisiert die geöffnete Ansicht im Hintergrund alle fünf Minuten.
+Beim Abmelden oder beim Deaktivieren löscht sie die gespeicherten
+Matrizen. Einstellungen, Datenspeicher und die optional gemerkte
+Sitzung liegen unter %LOCALAPPDATA%\WebUntis-Auswertung.
 
 QUELLCODE
 Mit dem .NET-10-SDK und NSIS ab Version 3.11 samt
@@ -127,8 +135,8 @@ Metadatendatei über -ArtifactSigningDll und -ArtifactSigningMetadata
 
 UPDATES VERÖFFENTLICHEN
 GitHub Actions erstellt bei einer neuen Projektversion auf main
-ein öffentliches Release mit einem Tag wie v2.9.0. Manuell lässt
+ein öffentliches Release mit einem Tag wie v3.0.0. Manuell lässt
 sich der Build in GitHub unter Actions → Windows-Release starten.
 Bei einem manuell veröffentlichten Release das Setup
-WebUntis-FehlzeitenMX-2.9-Setup-x64.exe anhängen und das Release
+WebUntis-FehlzeitenMX-3.0-Setup-x64.exe anhängen und das Release
 als «Latest» markieren.

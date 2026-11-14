@@ -6,6 +6,7 @@ namespace WebUntisAuswertung;
 internal sealed class MatrixView : UserControl
 {
     private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
+    private const TextFormatFlags CaptionFlags = TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
     internal static Color Ink => AppTheme.Ink;
     internal static Color Surface => AppTheme.Surface;
     internal static Color Line => AppTheme.Line;
@@ -14,6 +15,11 @@ internal sealed class MatrixView : UserControl
     {
         Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true,
         Padding = new Padding(8, 0, 5, 0), ForeColor = Ink
+    };
+    private readonly Label dataStand = new()
+    {
+        Dock = DockStyle.Right, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleRight,
+        ForeColor = AppTheme.Muted, Padding = new Padding(5, 0, 8, 0), Visible = false
     };
     private readonly Panel heading = new() { Dock = DockStyle.Top, Height = 38 };
     private readonly DataGridView grid = new()
@@ -33,8 +39,11 @@ internal sealed class MatrixView : UserControl
     private bool restoringSelection;
     private bool collapsed;
     private int collapsedScroll;
+    private bool savedStand;
+    private bool refreshRequired;
 
     public AttendanceMatrix? CurrentMatrix => matrix;
+    public bool IsShowingDeviceCopy => matrix != null && savedStand;
     public event Action<MatrixView, DayDetails>? DaySelected;
     public event Action<MatrixView, AttendanceMatrix, Student, DateOnly, Point, bool>? AbsenceRequested;
 
@@ -46,6 +55,9 @@ internal sealed class MatrixView : UserControl
         BackColor = Color.White;
         caption.Font = new Font(caption.Font, FontStyle.Bold);
         heading.Controls.Add(caption);
+        heading.Controls.Add(dataStand);
+        heading.Resize += (_, _) => FitStamp();
+        dataStand.FontChanged += (_, _) => FitStamp();
         if (collapsibleClass != null)
         {
             var button = new Button { Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, Text = "−",
@@ -112,6 +124,8 @@ internal sealed class MatrixView : UserControl
     public void SetStatus(string text)
     {
         matrix = null;
+        refreshRequired = false;
+        dataStand.Hide();
         days = [];
         grid.RowCount = 0;
         grid.Columns.Clear();
@@ -120,7 +134,7 @@ internal sealed class MatrixView : UserControl
         FitStacked();
     }
 
-    public DayDetails SetMatrix(AttendanceMatrix value, bool keepPosition = false)
+    public DayDetails SetMatrix(AttendanceMatrix value, bool keepPosition = false, bool fromDevice = false)
     {
         var offset = keepPosition ? (collapsed ? collapsedScroll : grid.HorizontalScrollingOffset) : 0;
         var current = keepPosition ? grid.CurrentCell : null;
@@ -140,6 +154,9 @@ internal sealed class MatrixView : UserControl
                 matrix = value;
                 days = visibleDays;
                 caption.Text = $"{value.ClassName}   ·   {value.From:dd.MM.yyyy} – {value.To:dd.MM.yyyy}   ·   {days.Length} Unterrichtstage";
+                savedStand = fromDevice;
+                refreshRequired = false;
+                UpdateStamp();
                 grid.ColumnHeadersHeight = Math.Max(48, grid.Font.Height * 2 + 9);
                 grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Name", Width = 218, Frozen = true,
                     SortMode = DataGridViewColumnSortMode.NotSortable });
@@ -176,6 +193,36 @@ internal sealed class MatrixView : UserControl
             return SelectedDayDetails() ?? DayDetails.Empty;
         }
         finally { restoringSelection = false; }
+    }
+
+    private void UpdateStamp()
+    {
+        if (matrix?.FetchedAt is not { } fetched)
+        {
+            dataStand.Hide();
+            return;
+        }
+        var stamp = fetched.ToLocalTime().ToString("dd.MM.yyyy HH:mm 'Uhr'", German);
+        dataStand.Text = refreshRequired ? $"Stand {stamp} · Aktualisierung ausstehend" :
+            savedStand ? $"Gespeicherter Stand {stamp}" : $"Stand {stamp}";
+        dataStand.AccessibleName = dataStand.Text;
+        dataStand.Show();
+        FitStamp();
+    }
+
+    public void MarkForRefresh()
+    {
+        if (matrix == null) return;
+        refreshRequired = true;
+        UpdateStamp();
+    }
+
+    private void FitStamp()
+    {
+        if (dataStand.Text.Length == 0) return;
+        var textWidth = TextRenderer.MeasureText(dataStand.Text, dataStand.Font, Size.Empty, CaptionFlags).Width + dataStand.Padding.Horizontal;
+        var width = Math.Min(textWidth, Math.Max(0, heading.Width / 2));
+        if (dataStand.Width != width) dataStand.Width = width;
     }
 
     private void FitStacked()

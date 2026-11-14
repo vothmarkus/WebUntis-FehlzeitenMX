@@ -49,6 +49,7 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
     private bool persistLogin = rememberLogin;
     public bool SessionConfirmed { get; private set; }
     public bool HasSavedLogin { get; private set; }
+    public bool AllowLoginPrompt { get; set; } = true;
     private int responseStatus;
 
     public async Task<(Student[] Classes, ReportRange? SchoolYear)> ClassesAsync(IProgress<string> progress, CancellationToken token,
@@ -1011,6 +1012,9 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
                     supplementsUsingMainView.Clear();
                 }
                 SessionConfirmed = false;
+                HasSavedLogin = false;
+                if (!AllowLoginPrompt)
+                    throw new InvalidOperationException("Für die Aktualisierung ist eine Anmeldung bei WebUntis erforderlich.");
                 if (state.Stage == "external" && mainWindow?.Visible != true && waiting.Elapsed < TimeSpan.FromSeconds(1))
                 {
                     await Task.Delay(200, token);
@@ -1018,7 +1022,6 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
                 }
                 if (mainWindow is { Visible: false } login)
                 {
-                    HasSavedLogin = false;
                     progress.Report("Melde dich im Anmeldefenster bei WebUntis an.");
                     login.ShowForLogin(owner);
                 }

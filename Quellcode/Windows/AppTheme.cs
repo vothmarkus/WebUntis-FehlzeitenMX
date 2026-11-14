@@ -229,6 +229,40 @@ internal sealed class BrandButton(bool primary) : Button
     }
 }
 
+internal sealed class TransferCancelButton : ToolStripButton
+{
+    public TransferCancelButton()
+    {
+        Text = "Übertragung abbrechen";
+        AccessibleName = Text;
+        ToolTipText = Text;
+        DisplayStyle = ToolStripItemDisplayStyle.None;
+        AutoSize = false;
+        Visible = false;
+        Enabled = false;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        var diameter = Math.Max(0, Math.Min(Width, Height) - 4);
+        if (diameter < 8) return;
+        var circle = new Rectangle((Width - diameter) / 2, (Height - diameter) / 2, diameter, diameter);
+        var highContrast = SystemInformation.HighContrast;
+        var fill = !Enabled ? SystemColors.GrayText : highContrast ? SystemColors.Highlight :
+            Pressed ? Color.FromArgb(139, 29, 41) : Color.FromArgb(190, 41, 57);
+        AppTheme.PaintRounded(e.Graphics, circle, fill, diameter / 2);
+        var center = new Point(circle.X + diameter / 2, circle.Y + diameter / 2);
+        var arm = diameter / 5;
+        var oldMode = e.Graphics.SmoothingMode;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var pen = new Pen(highContrast ? SystemColors.HighlightText : Color.White, Math.Max(1.5f, diameter / 9f));
+        e.Graphics.DrawLine(pen, center.X - arm, center.Y - arm, center.X + arm, center.Y + arm);
+        e.Graphics.DrawLine(pen, center.X - arm, center.Y + arm, center.X + arm, center.Y - arm);
+        e.Graphics.SmoothingMode = oldMode;
+    }
+}
+
 internal sealed class BrandCard : FlowLayoutPanel
 {
     public BrandCard()
