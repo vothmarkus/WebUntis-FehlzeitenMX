@@ -102,14 +102,14 @@ function reportCommand(request) {
     if (['lessonList', 'openLessonReport', 'lessonBack', 'prepareLessonExport', 'lessonExportFallback'].includes(request.action))
         return lessonCommand();
     const readingNotes = request.action === "absenceNotes";
-    const absenceAction = ["absenceActions", "openAbsenceEditor", "absenceEditorState"].includes(request.action);
+    const absenceAction = ["absenceActions", "openExcuse", "excuseState"].includes(request.action);
     const absenceList = readingNotes || absenceAction;
     const readingTimes = request.action === "absenceTimes";
-    if (absenceAction && location.pathname !== "/absences")
+    if (absenceAction && location.pathname.replace(/\/$/, "") !== "/absences")
         return { stage: documents.some(loginForm) ? "login" : "loading" };
     if ((absenceList || readingTimes) && globalYear && globalYear !== String(request.targetSchoolYear))
         return { stage: "wrongYear" };
-    if (request.action === "absenceEditorState")
+    if (request.action === "excuseState")
         return documents.some(loginForm) ? { stage: "login" } : absenceEditorState();
     const formId = absenceList ? "absenceListForm" : readingTimes ? "absenceTimesForm" : "classregReportForm";
     const classSelector = 'select[name="klasseOrStudentgroupId"],select[id="classregReportForm.idklasseId"]';
@@ -414,7 +414,7 @@ function reportCommand(request) {
     function absenceActions() {
         if (request.waitForFormStamp === formStamp) return state;
         if (!globalYear) return state;
-        const opening = request.action === "openAbsenceEditor";
+        const opening = request.action === "openExcuse";
         const day = request.absenceDay;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(day ?? "") || day !== request.from || day !== request.to)
             return unavailable("Der gewünschte WebUntis-Tag konnte nicht bestätigt werden.");
@@ -483,7 +483,6 @@ function reportCommand(request) {
             const toDay = asIso(text(toField));
             if (!fromDay || !toDay || fromDay > toDay || fromDay > day || day > toDay) continue;
             if (matchesById.has(id)) return unavailable("WebUntis zeigt dieselbe Abwesenheitskennung mehrfach an.");
-            const edit = row.querySelector("button.icon-edit");
             const statusCell = row.cells[statusField];
             const excuse = statusCell.querySelector("button.icon-questionmark") ??
                 [...statusCell.querySelectorAll("a[href]")].find(link =>
@@ -492,30 +491,23 @@ function reportCommand(request) {
             const status = clean(excuse?.title || excuse?.textContent || statusCell.textContent).replace(/\s*\/\s*\d+$/, "");
             matchesById.set(id, {
                 value: { id, from: fromDay, to: toDay, start: absenceTime(text(startField)), end: absenceTime(text(endField)),
-                    status, reason: text(reasonField),
-                    canEdit: enabled(edit), canExcuse: enabled(excuse) },
-                edit, excuse
+                    status, reason: text(reasonField), canExcuse: enabled(excuse) },
+                excuse
             });
         }
         if (!opening)
             return { ...state, absenceActionsReady: true, editableAbsences: [...matchesById.values()].map(row => row.value) };
         const row = matchesById.get(request.absenceRow?.id);
         const picked = request.absenceRow;
-        const control = request.excuseEditor ? row?.excuse : row?.edit;
+        const control = row?.excuse;
         if (!row || !enabled(control) || row.value.from !== picked.from || row.value.to !== picked.to ||
             row.value.start !== picked.start || row.value.end !== picked.end)
             return unavailable("Dieser Eintrag hat sich geändert oder ist gesperrt. Öffne das Kontextmenü erneut.");
         if (editor || [...doc.querySelectorAll('[role="dialog"]')].some(visible))
             return unavailable("In der WebUntis-Ansicht ist bereits ein Dialog geöffnet.");
-        const activeEditor = { id: request.editorId, doc, person: student.name, row: row.value,
-            excuse: request.excuseEditor, saveRequested: false };
-        exportHost.fehlzeitenMxAbsenceEditor = activeEditor;
-        doc.addEventListener("click", event => {
-            const button = event.target?.closest?.('button,[role="button"]');
-            if (button && activeEditor.dialog?.contains(button) && /^speichern$/i.test(clean(button.textContent).replace(/^●\s*/, "")))
-                activeEditor.saveRequested = true;
-        }, true);
-        control.click();
+        exportHost.fehlzeitenMxAbsenceEditor = { id: request.editorId, doc, person: student.name, saveRequested: false };
+        // Return before WebUntis opens the editor or runs any of its native prompts.
+        page.setTimeout(() => control.click(), 0);
         return { ...state, absenceEditorRequested: true };
 
         function changed(changedField) { return { ...state, changedField }; }
@@ -536,35 +528,92 @@ function reportCommand(request) {
 
     function absenceEditorState() {
         if (editor?.id !== request.editorId) return {};
-        if (!documents.includes(editor.doc))
-            return editor.dialog ? { absenceEditorClosed: true, saveRequested: editor.saveRequested } : {};
-        const { doc, excuse, row } = editor;
-        const id = excuse ? "excuseForm" : "absenceForm";
-        const form = doc.getElementById(id);
+        const { doc } = editor;
+        if (editor.dialog) return { absenceEditorVisible: true, editorWidth: editor.width, editorHeight: editor.height };
+        if (!documents.includes(doc)) return {};
+        const form = doc.getElementById("excuseForm");
         const current = form?.closest('[role="dialog"]');
-        if (!visible(current)) return editor.dialog ? { absenceEditorClosed: true, saveRequested: editor.saveRequested } : {};
-        if (editor.dialog) return { absenceEditorVisible: true, saveRequested: editor.saveRequested };
-        if (excuse) {
-            const title = absenceLabel(current.querySelector(".dijitDialogTitle")?.textContent);
-            if (title !== absenceLabel("Entschuldigung für " + editor.person))
-                return { error: "WebUntis hat die Person im Entschuldigungsdialog nicht bestätigt." };
-        } else {
-            const value = name => doc.getElementById("absenceForm.id" + name)?.value;
-            if (absenceLabel(value("person")) !== absenceLabel(editor.person) ||
-                asIso(value("startDate")) !== row.from || asIso(value("endDate")) !== row.to ||
-                (row.start && absenceTime(value("startTime")) !== row.start) ||
-                (row.end && absenceTime(value("endTime")) !== row.end))
-                return { error: "WebUntis hat Person oder Zeitraum im Abwesenheitsdialog nicht bestätigt." };
+        if (!visible(current)) return {};
+        const title = absenceLabel(current.querySelector(".dijitDialogTitle")?.textContent);
+        if (title !== absenceLabel("Entschuldigung für " + editor.person))
+            return { error: "WebUntis hat die Person im Entschuldigungsdialog nicht bestätigt." };
+
+        const pane = current.querySelector(".dijitDialogPaneContent");
+        if (!pane || !pane.contains(form)) return { error: "Das WebUntis-Entschuldigungsformular konnte nicht erkannt werden." };
+        const page = doc.defaultView;
+        const frame = page.frameElement;
+
+        // Recover the form's natural size before shrinking the WebView. Dijit otherwise limits
+        // the popup to a fraction of the viewport a second time when the host is resized.
+        setStyle(current, {
+            position: "fixed", top: "0", left: "0", width: "max-content", height: "auto",
+            "min-width": "0", "min-height": "0", "max-width": "none", "max-height": "none",
+            margin: "0", "box-sizing": "border-box", "box-shadow": "none"
+        });
+        for (const part of [pane, current.querySelector(".dijitDialogTitleBar"), current.querySelector(".dijitDialogPaneActionBar")]) {
+            if (part) setStyle(part, { position: "relative", inset: "auto", width: "auto", height: "auto",
+                "max-width": "none", "max-height": "none", overflow: "visible" });
         }
+        const content = current.getBoundingClientRect();
+        if (content.width <= 0 || content.height <= 0) return {};
+        const edge = Math.max(2, Math.ceil(content.width) - current.clientWidth);
+        editor.width = Math.max(Math.ceil(content.width), current.scrollWidth + edge);
+        setStyle(current, { width: editor.width + "px" });
+        const fitted = current.getBoundingClientRect();
+        editor.height = Math.max(Math.ceil(fitted.height), current.scrollHeight + 2);
         editor.dialog = current;
-        const frame = frames.find(item => item.contentDocument === doc);
+
         if (frame) setStyle(frame, {
             position: "fixed", inset: "0", border: "0", width: "100vw", height: "100vh",
             "max-width": "none", "max-height": "none", "z-index": "2147483647"
         });
-        const list = doc.getElementById("absencelist");
-        if (list && !list.contains(current)) setStyle(list, { visibility: "hidden" });
-        return { absenceEditorVisible: true };
+        // Hide the class register and its underlay. Keep sibling dropdowns and validation messages.
+        const background = doc.getElementById("app") ?? doc.getElementById("absencelist");
+        for (const layer of [background, ...doc.querySelectorAll(".dijitDialogUnderlayWrapper")]) {
+            if (!layer || layer.contains(current)) continue;
+            layer.inert = true;
+            setStyle(layer, { visibility: "hidden" });
+        }
+        setStyle(doc.documentElement, { background: "white", overflow: "hidden" });
+        setStyle(doc.body, { margin: "0", background: "white", overflow: "hidden" });
+        setStyle(current, { width: "100%", height: "auto", "max-height": "100%", overflow: "auto" });
+
+        doc.addEventListener("click", onButton, true);
+        form.addEventListener("submit", onSave);
+        const observer = new page.MutationObserver(() => {
+            if (visible(current)) return;
+            notify("closed");
+        });
+        observer.observe(current, { attributes: true, attributeFilter: ["style", "hidden", "aria-hidden"] });
+        observer.observe(current.parentElement, { childList: true });
+        page.addEventListener("pagehide", () => notify("closed"), { once: true });
+        return { absenceEditorVisible: true, editorWidth: editor.width, editorHeight: editor.height };
+
+        function onButton(event) {
+            const button = event.target?.closest?.('button,[role="button"]');
+            if (button && current.contains(button) && enabled(button) &&
+                /^speichern$/i.test(clean(button.textContent).replace(/^●\s*/, ""))) {
+                onSave();
+            }
+        }
+
+        function onSave() {
+            if (editor.saveRequested) return;
+            editor.saveRequested = true;
+            notify("save");
+        }
+
+        function notify(action) {
+            if (action === "closed") {
+                if (editor.closed) return;
+                editor.closed = true;
+                observer.disconnect();
+                doc.removeEventListener("click", onButton, true);
+                form.removeEventListener("submit", onSave);
+            }
+            // Send lifecycle signals to the host without transferring form values.
+            globalThis.chrome?.webview?.postMessage({ editorId: editor.id, action, saveRequested: editor.saveRequested });
+        }
 
         function setStyle(element, properties) {
             for (const [name, value] of Object.entries(properties)) element.style.setProperty(name, value, "important");

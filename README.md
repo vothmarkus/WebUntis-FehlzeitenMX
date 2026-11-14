@@ -12,6 +12,6 @@ Ab Version 2.7 prüft die App beim ersten Öffnen der Einstellungen, ob es auf G
 
 Melde dich unter **Einstellungen** bei WebUntis an und wähle deine Klassen. In der **Tagesmatrix** zeigt ein Klick auf eine Zelle die Details zum gewählten Tag. Die Anwesenheitsberichte bleiben im Arbeitsspeicher. Eine Schülerliste wird erst beim ausdrücklich gewählten CSV-Export geschrieben.
 
-Auf der **Startseite** zeigt ein Rechtsklick auf eine Fehlzeit oder Verspätung die passenden WebUntis-Einträge. Über den Zeitraum öffnest du den Stift-Dialog, über **Entschuldigung** den Statusdialog. Es gelten die Bearbeitungsrechte in WebUntis.
+Auf der **Startseite** zeigt ein Rechtsklick auf eine Fehlzeit oder Verspätung die passenden WebUntis-Einträge. **Entschuldigung** öffnet den originalen WebUntis-Statusdialog. Es gelten die Bearbeitungsrechte in WebUntis.
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.

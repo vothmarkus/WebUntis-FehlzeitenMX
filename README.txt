@@ -11,11 +11,11 @@ Die Startseite lädt ihre Klassen automatisch. Unter Meine Klassen
 du Klasse und Zeitraum frei wählen. Ein Klick auf einen Tag in
 der Matrix zeigt die Details zur ausgewählten Person.
 
-Abwesenheiten bearbeiten
+Abwesenheiten entschuldigen
 Auf der Startseite öffnet ein Rechtsklick auf eine Fehlzeit oder
-Verspätung die zugehörigen WebUntis-Einträge. Der Zeitraum öffnet
-den Originaldialog der Abwesenheit. Der Eintrag «Entschuldigung»
-öffnet den WebUntis-Statusdialog, soweit WebUntis ihn anbietet.
+Verspätung die zugehörigen WebUntis-Einträge. Ein Klick auf
+«Entschuldigung» öffnet den originalen WebUntis-Statusdialog
+in einem Fenster, das sich an die Größe des Formulars anpasst.
 Speichere im WebUntis-Dialog. Anschließend liest die App die
 betroffene Klasse neu ein.
 

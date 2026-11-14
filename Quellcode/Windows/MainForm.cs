@@ -877,14 +877,14 @@ internal sealed class MainForm : Form
             {
                 var rows = await browser.ReadAbsenceActionsAsync(matrix, student, day, progress, lookup.Token);
                 if (!menu.Visible) return;
-                var available = rows.Where(row => row.CanEdit || row.CanExcuse).OrderBy(row => row.From)
+                var available = rows.Where(row => row.CanExcuse).OrderBy(row => row.From)
                     .ThenBy(row => CsvReport.ReadTime(row.Start)).ThenBy(row => row.To)
                     .ThenBy(row => CsvReport.ReadTime(row.End)).ToArray();
                 if (available.Length == 0)
                 {
                     message.Text = rows.Length == 0
                         ? "Keine passende WebUntis-Abwesenheit gefunden."
-                        : "WebUntis bietet für diese Einträge keine Bearbeitung an.";
+                        : "WebUntis bietet für diese Einträge keinen Entschuldigungsdialog an.";
                     return;
                 }
                 menu.Items.Remove(message);
@@ -894,8 +894,7 @@ internal sealed class MainForm : Form
                     var period = row.From == row.To ? $"{row.From:dd.MM.} · {row.Start}–{row.End}" :
                         $"{row.From:dd.MM.} {row.Start} – {row.To:dd.MM.} {row.End}";
                     if (row.Status.Length > 0) period += $" · {row.Status}";
-                    if (row.CanEdit) AddAction(period, row, excuse: false);
-                    if (row.CanExcuse) AddAction($"Entschuldigung · {period}", row, excuse: true);
+                    AddAction($"Entschuldigung · {period}", row);
                 }
                 menu.ShowItemToolTips = true;
             }
@@ -909,19 +908,18 @@ internal sealed class MainForm : Form
             finally { menu.Closed -= closed; }
         });
 
-        void AddAction(string label, AbsenceListEntry row, bool excuse)
+        void AddAction(string label, AbsenceListEntry row)
         {
             var item = new ToolStripMenuItem(label)
             {
-                ToolTipText = row.Reason.Length > 0 ? row.Reason :
-                    excuse ? "Entschuldigung in WebUntis öffnen" : "Abwesenheit in WebUntis bearbeiten"
+                ToolTipText = row.Reason.Length > 0 ? row.Reason : "Entschuldigung in WebUntis öffnen"
             };
             item.Click += (_, _) => BeginInvoke(async () =>
             {
                 if (IsDisposed || tabs.SelectedTab != homePage || source.IsDisposed) return;
                 await RunAsync(async (token, progress) =>
                 {
-                    var saveRequested = await browser.ShowAbsenceEditorAsync(matrix, student, day, row, excuse, progress, token);
+                    var saveRequested = await browser.ShowExcuseAsync(matrix, student, day, row, progress, token);
                     if (saveRequested) await ReloadEditedClassAsync(source, matrix, token, progress);
                 });
             });
