@@ -415,10 +415,13 @@ function reportCommand(request) {
         if (request.waitForFormStamp === formStamp) return state;
         if (!globalYear) return state;
         const opening = request.action === "openExcuse";
+        const entireClass = request.classAbsences === true;
         const day = request.absenceDay;
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(day ?? "") || day !== request.from || day !== request.to)
+        const isoDay = /^\d{4}-\d{2}-\d{2}$/;
+        if (!isoDay.test(request.from) || !isoDay.test(request.to) || request.from > request.to ||
+            ((!entireClass || opening) && (!isoDay.test(day) || day < request.from || day > request.to)) ||
+            (!entireClass && (day !== request.from || day !== request.to)))
             return unavailable("Der gewünschte WebUntis-Tag konnte nicht bestätigt werden.");
-        const person = request.absencePerson;
         const key = absenceLabel;
         const wantedClass = options(classSelect).filter(option =>
             option.id === request.classId && key(option.name) === key(request.className));
@@ -427,19 +430,27 @@ function reportCommand(request) {
             changeSelect(classSelect, wantedClass[0].id);
             return changed("Klasse");
         }
-        const students = options(studentSelect);
-        const matches = students.filter(option => /^\d+$/.test(option.id) &&
-            key(option.name) === key(person?.name) && (!person?.id || option.id === person.id));
-        if (matches.length !== 1) return unavailable("Die Person konnte in der WebUntis-Klassenliste nicht eindeutig bestätigt werden.");
-        const student = matches[0];
-        if (studentSelect.value !== student.id) {
-            changeSelect(studentSelect, student.id);
-            return changed("Schüler*in");
+        const students = options(studentSelect).filter(option => /^\d+$/.test(option.id));
+        const person = request.absencePerson;
+        let student;
+        if (!entireClass || opening) {
+            const matches = students.filter(option => key(option.name) === key(person?.name) && (!person?.id || option.id === person.id));
+            if (matches.length !== 1) return unavailable("Die Person konnte in der WebUntis-Klassenliste nicht eindeutig bestätigt werden.");
+            [student] = matches;
+        }
+        const studentFilter = entireClass ? [...(studentSelect?.options ?? [])].find(option => !option.disabled &&
+            (option === all || /^(alle\b|[-–—]+$)/i.test(clean(option.text)))) : student;
+        if (!studentFilter) return unavailable("WebUntis bietet keine Abwesenheitsliste für die ganze Klasse an.");
+        const studentFilterValue = entireClass ? studentFilter.value : studentFilter.id;
+        if (studentSelect.value !== studentFilterValue) {
+            if (studentSelect.disabled) return unavailable("Der Schülerfilter lässt sich in WebUntis nicht ändern.");
+            changeSelect(studentSelect, studentFilterValue);
+            return changed("Schülerfilter");
         }
         for (const name of ["absenceReasonId", "excuseStatusId", "guardianNotified"]) {
             const filter = form.querySelector(`select[name="${name}"]`);
             const unfiltered = [...(filter?.options ?? [])].find(option => !option.disabled && /^[- ]*alle\b/i.test(clean(option.text)));
-            if (unfiltered && filter.value !== unfiltered.value) {
+            if (filter && unfiltered && filter.value !== unfiltered.value) {
                 changeSelect(filter, unfiltered.value);
                 return changed(name);
             }
@@ -461,6 +472,8 @@ function reportCommand(request) {
         if (!state.hasDateInputs || dateInputs.some(field => !field)) return state;
         if (!dateInputs.every(matchesDate)) return changed(changeDate());
         const table = doc.getElementById("absenceListForm.absences");
+        if (!table && entireClass && !opening &&
+            !/keine\s+(daten|einträge|ergebnisse|abwesenheiten)|0\s+elemente?\s+gefunden/i.test(clean(form.innerText))) return state;
         if (!table)
             return opening ? unavailable("Der Eintrag fehlt in der aktuellen WebUntis-Abwesenheitsliste.") :
                 { ...state, absenceActionsReady: true, editableAbsences: [] };
@@ -471,17 +484,24 @@ function reportCommand(request) {
             return unavailable("WebUntis liefert nur einen Ausschnitt der Abwesenheitsliste.");
         const reasonField = headings.indexOf("grund");
         const [personField, classField, fromField, startField, toField, endField, statusField] = fields;
+        const idsByName = new Map();
+        for (const candidate of students) {
+            const name = key(candidate.name);
+            idsByName.set(name, idsByName.has(name) ? "" : candidate.id);
+        }
         const matchesById = new Map();
         for (const row of [...table.tBodies].flatMap(body => [...body.rows])) {
             if (row.cells.length !== headings.length) continue;
             const id = row.querySelector('input[type="checkbox"][name="selId"]')?.value;
             if (!id || !/^\d+$/.test(id)) continue;
             const text = index => clean(row.cells[index]?.textContent);
-            if (key(text(personField)) !== key(student.name) || key(text(classField)) !== key(request.className))
+            const studentName = text(personField);
+            const studentId = entireClass ? idsByName.get(key(studentName)) ?? "" : student.id;
+            if ((!entireClass && key(studentName) !== key(student.name)) || key(text(classField)) !== key(request.className))
                 return unavailable("WebUntis zeigt Zeilen außerhalb des bestätigten Filters an.");
             const fromDay = asIso(text(fromField));
             const toDay = asIso(text(toField));
-            if (!fromDay || !toDay || fromDay > toDay || fromDay > day || day > toDay) continue;
+            if (!fromDay || !toDay || fromDay > toDay || fromDay > request.to || toDay < request.from) continue;
             if (matchesById.has(id)) return unavailable("WebUntis zeigt dieselbe Abwesenheitskennung mehrfach an.");
             const statusCell = row.cells[statusField];
             const excuse = statusCell.querySelector("button.icon-questionmark") ??
@@ -490,19 +510,24 @@ function reportCommand(request) {
                         .exec(link.getAttribute("href") ?? "")?.[1] === id);
             const status = clean(excuse?.title || excuse?.textContent || statusCell.textContent).replace(/\s*\/\s*\d+$/, "");
             matchesById.set(id, {
-                value: { id, from: fromDay, to: toDay, start: absenceTime(text(startField)), end: absenceTime(text(endField)),
-                    status, reason: text(reasonField), canExcuse: enabled(excuse) },
+                value: { id, studentName, studentId,
+                    from: fromDay, to: toDay, start: absenceTime(text(startField)), end: absenceTime(text(endField)),
+                    status, reason: text(reasonField), canExcuse: enabled(excuse) && !!studentId },
                 excuse
             });
         }
-        if (!opening)
-            return { ...state, absenceActionsReady: true, editableAbsences: [...matchesById.values()].map(row => row.value) };
+        if (!opening) {
+            const notes = readAbsenceNotes(table);
+            return { ...state, absenceActionsReady: true, editableAbsences: [...matchesById.values()].map(row => row.value),
+                notesReady: notes != null, absenceNotes: notes ?? [] };
+        }
         const row = matchesById.get(request.absenceRow?.id);
         const picked = request.absenceRow;
         const control = row?.excuse;
-        if (!row || !enabled(control) || row.value.from !== picked.from || row.value.to !== picked.to ||
+        if (!row || !enabled(control) || row.value.studentId !== student.id || day < row.value.from || day > row.value.to ||
+            row.value.from !== picked.from || row.value.to !== picked.to ||
             row.value.start !== picked.start || row.value.end !== picked.end)
-            return unavailable("Dieser Eintrag hat sich geändert oder ist gesperrt. Öffne das Kontextmenü erneut.");
+            return unavailable("Dieser Eintrag hat sich geändert oder ist gesperrt. Wähle die Tageszelle erneut.");
         if (editor || [...doc.querySelectorAll('[role="dialog"]')].some(visible))
             return unavailable("In der WebUntis-Ansicht ist bereits ein Dialog geöffnet.");
         exportHost.fehlzeitenMxAbsenceEditor = { id: request.editorId, doc, person: student.name, saveRequested: false };
@@ -524,6 +549,26 @@ function reportCommand(request) {
     function absenceTime(value) {
         const time = clean(value);
         return /^\d:\d{2}$/.test(time) ? "0" + time : time;
+    }
+
+    function readAbsenceNotes(table) {
+        const rows = [...(table?.rows ?? [])];
+        const header = rows.find(row => [...row.cells].some(cell => cell.tagName === "TH"));
+        if (!header) return null;
+        const headings = [...header.cells].map(cell => clean(cell.textContent).toLowerCase());
+        const name = headings.indexOf("schüler*innen");
+        const from = headings.indexOf("von");
+        const to = headings.indexOf("bis");
+        const reason = headings.indexOf("grund");
+        const text = headings.indexOf("text");
+        const excuseText = headings.indexOf("entschuldigungstext");
+        if (name < 0 || from < 0 || to < 0 || (reason < 0 && text < 0 && excuseText < 0)) return null;
+        return rows.filter(row => row.cells.length === headings.length && row.cells[name].tagName === "TD")
+            .map(row => {
+                const cell = index => row.cells[index]?.textContent?.trim() ?? "";
+                return { name: clean(cell(name)), from: asIso(cell(from)), to: asIso(cell(to)),
+                    reason: cell(reason), text: cell(text), excuseText: cell(excuseText) };
+            }).filter(note => note.name && note.from && note.to && (note.reason || note.text || note.excuseText));
     }
 
     function absenceEditorState() {
@@ -611,6 +656,7 @@ function reportCommand(request) {
         resizeObserver.observe(current);
         resizeObserver.observe(form);
         page.addEventListener("pagehide", () => notify("closed"), { once: true });
+        document.defaultView.addEventListener("pagehide", () => notify("closed"), { once: true });
         return { absenceEditorVisible: true, editorWidth: editor.width, editorHeight: editor.height };
 
         function applyLayout() {
@@ -725,25 +771,9 @@ function reportCommand(request) {
     if (readingNotes) {
         if (!dateMatches.every(Boolean)) return { ...state, changedField: changeDate() };
         const table = doc.getElementById("absenceListForm.absences");
-        const rows = [...(table?.rows ?? [])];
-        const header = rows.find(row => [...row.cells].some(cell => cell.tagName === "TH"));
-        if (!header) return state;
-        const headings = [...header.cells].map(cell => clean(cell.textContent).toLowerCase());
-        const name = headings.indexOf("schüler*innen");
-        const from = headings.indexOf("von");
-        const to = headings.indexOf("bis");
-        const reason = headings.indexOf("grund");
-        const text = headings.indexOf("text");
-        const excuseText = headings.indexOf("entschuldigungstext");
-        if (name < 0 || from < 0 || to < 0 || (reason < 0 && text < 0 && excuseText < 0))
-            return { ...state, notesUnavailable: true };
-        const absenceNotes = rows.filter(row => row.cells.length === headings.length && row.cells[name].tagName === "TD")
-            .map(row => {
-                const cell = index => row.cells[index]?.textContent?.trim() ?? "";
-                return { name: clean(cell(name)), from: asIso(cell(from)), to: asIso(cell(to)),
-                    reason: cell(reason), text: cell(text), excuseText: cell(excuseText) };
-            }).filter(note => note.name && note.from && note.to && (note.reason || note.text || note.excuseText));
-        return { ...state, notesReady: true, absenceNotes };
+        if (!table) return state;
+        const absenceNotes = readAbsenceNotes(table);
+        return absenceNotes == null ? { ...state, notesUnavailable: true } : { ...state, notesReady: true, absenceNotes };
     }
     const isAbsence = request.kind === "Absences" || request.kind === "Lateness";
     const group = form.querySelector("select[name='absClassGroup']");

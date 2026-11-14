@@ -12,12 +12,13 @@ du Klasse und Zeitraum frei wählen. Ein Klick auf einen Tag in
 der Matrix zeigt die Details zur ausgewählten Person.
 
 Abwesenheiten entschuldigen
-Auf der Startseite öffnet ein Rechtsklick auf eine Fehlzeit oder
-Verspätung die zugehörigen WebUntis-Einträge. Ein Klick auf
-«Entschuldigung» öffnet den originalen WebUntis-Statusdialog
-in einem Fenster, das sich an die Größe des Formulars anpasst.
-Speichere im WebUntis-Dialog. Anschließend liest die App die
-betroffene Klasse neu ein.
+Auf der Startseite öffnet ein Doppelklick auf eine Fehlzeit oder
+Verspätung den WebUntis-Dialog. Bei mehreren Einträgen erscheint
+ein Auswahlmenü. Ein Rechtsklick öffnet die Auswahl ebenfalls.
+Nach dem Speichern lädt die App die betroffene Klasse neu und
+zeigt die aktualisierten Details der ausgewählten Tageszelle.
+Mit − und + rechts in der Überschrift klappst du die Matrix ein
+und aus.
 
 CSV für den Notenrechner
 Unter Einstellungen → CSV-Download speicherst du die Namenslisten

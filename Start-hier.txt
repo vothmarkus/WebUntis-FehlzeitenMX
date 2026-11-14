@@ -1,5 +1,5 @@
 WebUntis-FehlzeitenMX
-Windows x64 · Version 2.8.3
+Windows x64 · Version 2.9
 
 INSTALLIEREN UND AKTUALISIEREN
 1. Das Setup ausführen. Es schließt die bisherige App beim Installieren.
@@ -54,12 +54,14 @@ die Spalte zu schmal ist. Bei Bedarf ergänzt die App Uhrzeiten,
 Entschuldigungsstatus und Freitexte aus dem Klassenbuch.
 
 ABWESENHEITEN AUF DER STARTSEITE ENTSCHULDIGEN
-Rechtsklick auf eine Fehlzeit oder Verspätung in der Startseite.
-Wähle «Entschuldigung» für den passenden Zeitraum. Die App zeigt
-den Originaldialog des WebUntis-Statussymbols. WebUntis bestimmt
-anhand deiner Berechtigungen, welche Einträge verfügbar sind.
+Doppelklick auf eine Fehlzeit oder Verspätung auf der Startseite.
+Bei mehreren Einträgen wählst du den Zeitraum im Menü. Das Menü
+ist auch per Rechtsklick erreichbar. WebUntis bestimmt anhand
+deiner Berechtigungen, welche Einträge verfügbar sind.
 Mit «Speichern» im WebUntis-Dialog übernimmst du deine Änderungen.
-Danach lädt die App die betroffene Klasse erneut.
+Danach lädt die App die Klasse neu und zeigt die aktualisierten
+Details der ausgewählten Tageszelle. Mit − und + in der
+Überschrift klappst du die Klassenmatrix ein und aus.
 
 • anwesend oder kein Fehlzeiteintrag, │ Fehlzeit, E entschuldigte
 Fehlzeit, + verspätet, │+ oder E+ Fehlzeit und Verspätung,
@@ -125,8 +127,8 @@ Metadatendatei über -ArtifactSigningDll und -ArtifactSigningMetadata
 
 UPDATES VERÖFFENTLICHEN
 GitHub Actions erstellt bei einer neuen Projektversion auf main
-ein öffentliches Release mit einem Tag wie v2.8.3. Manuell lässt
+ein öffentliches Release mit einem Tag wie v2.9.0. Manuell lässt
 sich der Build in GitHub unter Actions → Windows-Release starten.
 Bei einem manuell veröffentlichten Release das Setup
-WebUntis-FehlzeitenMX-2.8.3-Setup-x64.exe anhängen und das Release
+WebUntis-FehlzeitenMX-2.9-Setup-x64.exe anhängen und das Release
 als «Latest» markieren.
