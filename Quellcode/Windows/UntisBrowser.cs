@@ -547,6 +547,7 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         var window = page.Window;
         var saveRequested = false;
         var closed = false;
+        var latestSize = Size.Empty;
         try
         {
             browser.WebMessageReceived += OnEditorMessage;
@@ -557,7 +558,7 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
             token.ThrowIfCancellationRequested();
             using var cancellation = token.Register(() => FinishDialog(DialogResult.Cancel));
             if (!closed && !window.IsDisposed)
-                window.ShowForExcuse(owner, size);
+                window.ShowForExcuse(owner, latestSize.IsEmpty ? size : latestSize);
             token.ThrowIfCancellationRequested();
             return saveRequested;
         }
@@ -578,7 +579,16 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
             EditorMessage? message;
             try { message = JsonSerializer.Deserialize<EditorMessage>(args.WebMessageAsJson, Json); }
             catch (JsonException) { return; }
-            if (message?.EditorId != editorId || message.Action is not ("save" or "closed")) return;
+            if (message?.EditorId != editorId || closed) return;
+            if (message.Action == "size")
+            {
+                if (message.Width <= 0 || message.Height <= 0) return;
+                latestSize = new Size(message.Width, message.Height);
+                if (!window.IsDisposed && window.IsHandleCreated && window.Visible)
+                    window.BeginInvoke(() => { if (!closed && !window.IsDisposed) window.UpdateExcuseSize(latestSize); });
+                return;
+            }
+            if (message.Action is not ("save" or "closed")) return;
             saveRequested |= message.SaveRequested;
             if (message.Action != "closed") return;
             closed = true;
@@ -1623,7 +1633,7 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
 
     private sealed record ReportSelection(string ClassId, DateOnly From, DateOnly To, bool ExcusedOnly = false);
     private sealed record AbsencePerson(string Id, string Name);
-    private sealed record EditorMessage(string EditorId, string Action, bool SaveRequested);
+    private sealed record EditorMessage(string EditorId, string Action, bool SaveRequested, int Width, int Height);
     private sealed class SupplementPage(LoginWindow window, int year) : IDisposable
     {
         public CoreWebView2 Browser => window.Browser;

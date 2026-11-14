@@ -180,10 +180,10 @@ function reportCommand(request) {
     }
     if (request.action === "probe") return state;
 
-    function widgetById(id) {
-        const legacy = page.dijit?.byId?.(id);
+    function widgetById(id, ownerWindow = page) {
+        const legacy = ownerWindow.dijit?.byId?.(id);
         if (legacy) return legacy;
-        try { return page.require?.("dijit/registry")?.byId(id); }
+        try { return ownerWindow.require?.("dijit/registry")?.byId(id); }
         catch { return null; }
     }
     function dateWidget(field) {
@@ -538,32 +538,29 @@ function reportCommand(request) {
         if (title !== absenceLabel("Entschuldigung für " + editor.person))
             return { error: "WebUntis hat die Person im Entschuldigungsdialog nicht bestätigt." };
 
-        const pane = current.querySelector(".dijitDialogPaneContent");
-        if (!pane || !pane.contains(form)) return { error: "Das WebUntis-Entschuldigungsformular konnte nicht erkannt werden." };
+        const pane = form.closest(".dijitDialogPaneContent");
+        if (!pane || !current.contains(pane)) return { error: "Das WebUntis-Entschuldigungsformular konnte nicht erkannt werden." };
         const page = doc.defaultView;
         const frame = page.frameElement;
 
-        // Dijit rewrites inline dimensions and offsets whenever the WebView is resized.
-        // Anchor the dialog and keep its content at its natural size after those changes.
-        current.setAttribute("data-fehlzeiten-mx-excuse", "");
-        const layout = addLayout(doc, `
+        // The host sizes the window. Keep Dijit from fitting this dialog inside it a second time.
+        const widget = widgetById(current.getAttribute("widgetid") || current.id, page);
+        if (widget?.domNode === current && Number.isFinite(widget.maxRatio)) widget.maxRatio = Infinity;
+
+        // The scroll area can be an inner wrapper. Let every ancestor of the original form grow with it.
+        const parts = [current.querySelector(".dijitDialogTitleBar"), current.querySelector(".dijitDialogPaneActionBar")].filter(Boolean);
+        for (let part = form; part !== current; part = part.parentElement) parts.push(part);
+        const naturalSize = { width: "auto", height: "auto", "min-width": "0px", "min-height": "0px",
+            "max-width": "none", "max-height": "none", overflow: "visible" };
+        const dialogStyle = { ...naturalSize, position: "absolute", inset: "0px auto auto 0px", width: "max-content",
+            margin: "0px", "box-sizing": "border-box", "box-shadow": "none" };
+        const partStyle = { ...naturalSize, position: "relative", inset: "auto" };
+        applyLayout();
+
+        addLayout(doc, `
             html { background: white !important; overflow: auto !important; }
             body { margin: 0 !important; min-width: 0 !important; min-height: 0 !important; }
             [data-fehlzeiten-mx-excuse-background] { display: none !important; }
-            [data-fehlzeiten-mx-excuse] {
-                position: absolute !important; inset: 0 auto auto 0 !important;
-                width: max-content !important; height: auto !important;
-                min-width: 0 !important; min-height: 0 !important;
-                max-width: none !important; max-height: none !important;
-                margin: 0 !important; box-sizing: border-box !important;
-                overflow: visible !important; box-shadow: none !important;
-            }
-            [data-fehlzeiten-mx-excuse] > :is(.dijitDialogPaneContent, .dijitDialogTitleBar, .dijitDialogPaneActionBar) {
-                position: relative !important; inset: auto !important;
-                width: auto !important; height: auto !important;
-                min-width: 0 !important; min-height: 0 !important;
-                max-width: none !important; max-height: none !important; overflow: visible !important;
-            }
         `);
         const background = doc.getElementById("app") ?? doc.getElementById("absencelist");
         for (const layer of [background, ...doc.querySelectorAll(".dijitDialogUnderlayWrapper")]) {
@@ -572,23 +569,11 @@ function reportCommand(request) {
             layer.setAttribute("data-fehlzeiten-mx-excuse-background", "");
         }
 
-        const content = current.getBoundingClientRect();
-        if (content.width <= 0 || content.height <= 0)
-            return { error: "Die Größe des WebUntis-Entschuldigungsformulars konnte nicht bestimmt werden." };
-        const edge = Math.max(2, Math.ceil(content.width) - current.clientWidth);
-        const width = Math.max(Math.ceil(content.width), current.scrollWidth + edge);
-        layout.insertRule(`[data-fehlzeiten-mx-excuse] { width: ${width}px !important; }`, layout.cssRules.length);
-        const fitted = current.getBoundingClientRect();
-        const bottomEdge = Math.max(2, Math.ceil(fitted.height) - current.clientHeight);
-        // Leave room for rounding from CSS pixels to Windows device pixels.
-        editor.width = width + 2;
-        editor.height = Math.max(Math.ceil(fitted.height), current.scrollHeight + bottomEdge) + 2;
-        editor.dialog = current;
-
         if (frame) {
-            frame.setAttribute("data-fehlzeiten-mx-excuse", "");
+            frame.setAttribute("data-fehlzeiten-mx-excuse-frame", "");
             addLayout(frame.ownerDocument, `
-                [data-fehlzeiten-mx-excuse] {
+                html, body { overflow: hidden !important; }
+                [data-fehlzeiten-mx-excuse-frame] {
                     position: fixed !important; inset: 0 !important;
                     width: 100vw !important; height: 100vh !important;
                     min-width: 0 !important; min-height: 0 !important;
@@ -599,17 +584,56 @@ function reportCommand(request) {
             `);
         }
         page.scrollTo(0, 0);
+        const size = measure();
+        if (!size) return { error: "Die Größe des WebUntis-Entschuldigungsformulars konnte nicht bestimmt werden." };
+        // Fix the measured width before the viewport changes, so wrapping stays stable.
+        dialogStyle.width = (size.width - 2) + "px";
+        applyLayout();
+        Object.assign(editor, size, { dialog: current });
 
         doc.addEventListener("click", onButton, true);
         form.addEventListener("submit", onSave);
         const observer = new page.MutationObserver(() => {
-            if (visible(current)) return;
-            notify("closed");
+            if (visible(current)) applyLayout();
+            else notify("closed");
         });
         observer.observe(current, { attributes: true, attributeFilter: ["style", "hidden", "aria-hidden"] });
+        for (const part of parts) observer.observe(part, { attributes: true, attributeFilter: ["style"] });
         observer.observe(current.parentElement, { childList: true });
+        const resizeObserver = new page.ResizeObserver(() => {
+            const size = measure();
+            if (!size || (size.width === editor.width && size.height === editor.height)) return;
+            dialogStyle.width = (size.width - 2) + "px";
+            applyLayout();
+            Object.assign(editor, size);
+            notify("size");
+        });
+        resizeObserver.observe(current);
+        resizeObserver.observe(form);
         page.addEventListener("pagehide", () => notify("closed"), { once: true });
         return { absenceEditorVisible: true, editorWidth: editor.width, editorHeight: editor.height };
+
+        function applyLayout() {
+            setLayout(current, dialogStyle);
+            for (const part of parts) setLayout(part, partStyle);
+        }
+
+        function setLayout(element, rules) {
+            for (const [name, value] of Object.entries(rules)) {
+                if (element.style.getPropertyValue(name) !== value || element.style.getPropertyPriority(name) !== "important")
+                    element.style.setProperty(name, value, "important");
+            }
+        }
+
+        function measure() {
+            const { width, height } = current.getBoundingClientRect();
+            if (width <= 0 || height <= 0) return null;
+            // Include overflowing content and leave room for CSS-to-device-pixel rounding.
+            return {
+                width: Math.ceil(width + Math.max(0, current.scrollWidth - current.clientWidth)) + 2,
+                height: Math.ceil(height + Math.max(0, current.scrollHeight - current.clientHeight)) + 2
+            };
+        }
 
         function onButton(event) {
             const button = event.target?.closest?.('button,[role="button"]');
@@ -630,18 +654,19 @@ function reportCommand(request) {
                 if (editor.closed) return;
                 editor.closed = true;
                 observer.disconnect();
+                resizeObserver.disconnect();
                 doc.removeEventListener("click", onButton, true);
                 form.removeEventListener("submit", onSave);
             }
-            // Send lifecycle signals to the host without transferring form values.
-            globalThis.chrome?.webview?.postMessage({ editorId: editor.id, action, saveRequested: editor.saveRequested });
+            // Send dimensions and lifecycle signals to the host without transferring form values.
+            globalThis.chrome?.webview?.postMessage({ editorId: editor.id, action, saveRequested: editor.saveRequested,
+                width: editor.width, height: editor.height });
         }
 
         function addLayout(ownerDocument, rules) {
             const sheet = new ownerDocument.defaultView.CSSStyleSheet();
             sheet.replaceSync(rules);
             ownerDocument.adoptedStyleSheets = [...ownerDocument.adoptedStyleSheets, sheet];
-            return sheet;
         }
     }
     const dateMatches = dateInputs.map(matchesDate);

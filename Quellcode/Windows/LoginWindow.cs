@@ -11,6 +11,7 @@ internal sealed class LoginWindow : Form
         TextAlign = ContentAlignment.MiddleLeft, Text = UntisBrowser.Origin
     };
     private CoreWebView2Controller? controller;
+    private Size excuseContentSize;
 
     public CoreWebView2 Browser => controller!.CoreWebView2;
     public event Action? Canceled;
@@ -65,6 +66,7 @@ internal sealed class LoginWindow : Form
         MinimizeBox = false;
         MaximizeBox = false;
         MinimumSize = Size.Empty;
+        excuseContentSize = content;
         address.Hide();
         var ownerArea = Screen.FromControl(owner).WorkingArea;
         // Move the existing WebView to the owner's monitor before converting CSS pixels.
@@ -92,19 +94,28 @@ internal sealed class LoginWindow : Form
                 controller.ZoomFactorChanged -= scaleChanged;
             }
         }
+    }
 
-        void FitExcuseWindow(Rectangle area, bool center)
-        {
-            if (controller == null || IsDisposed) return;
-            var scale = controller.RasterizationScale * controller.ZoomFactor;
-            var preferred = SizeFromClientSize(new Size((int)Math.Ceiling(content.Width * scale), (int)Math.Ceiling(content.Height * scale)));
-            var width = Math.Min(preferred.Width, area.Width);
-            var height = Math.Min(preferred.Height, area.Height);
-            var x = center ? area.X + (area.Width - width) / 2 : Math.Clamp(Left, area.Left, area.Right - width);
-            var y = center ? area.Y + (area.Height - height) / 2 : Math.Clamp(Top, area.Top, area.Bottom - height);
-            Bounds = new Rectangle(x, y, width, height);
-            FitBrowser();
-        }
+    public void UpdateExcuseSize(Size content)
+    {
+        if (excuseContentSize == content) return;
+        excuseContentSize = content;
+        if (Visible && Modal) FitExcuseWindow(Screen.FromControl(this).WorkingArea, center: false);
+    }
+
+    private void FitExcuseWindow(Rectangle area, bool center)
+    {
+        if (controller == null || IsDisposed) return;
+        var scale = controller.RasterizationScale * controller.ZoomFactor;
+        var clientWidth = (int)Math.Min(Math.Ceiling(excuseContentSize.Width * scale), area.Width);
+        var clientHeight = (int)Math.Min(Math.Ceiling(excuseContentSize.Height * scale), area.Height);
+        var preferred = SizeFromClientSize(new Size(clientWidth, clientHeight));
+        var width = Math.Min(preferred.Width, area.Width);
+        var height = Math.Min(preferred.Height, area.Height);
+        var x = center ? area.X + (area.Width - width) / 2 : Math.Clamp(Left, area.Left, area.Right - width);
+        var y = center ? area.Y + (area.Height - height) / 2 : Math.Clamp(Top, area.Top, area.Bottom - height);
+        Bounds = new Rectangle(x, y, width, height);
+        FitBrowser();
     }
 
     public void ShowAddress(string? value)

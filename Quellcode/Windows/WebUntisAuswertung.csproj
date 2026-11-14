@@ -12,7 +12,7 @@
     <Product>WebUntis-FehlzeitenMX</Product>
     <AssemblyTitle>$(Product)</AssemblyTitle>
     <RootNamespace>WebUntisAuswertung</RootNamespace>
-    <Version>2.8.2</Version>
+    <Version>2.8.3</Version>
     <ApplicationIcon>Assets/BKT.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
