@@ -6,13 +6,6 @@ using WebUntisAuswertung.Core;
 
 namespace WebUntisAuswertung;
 
-internal sealed record MatrixData(string ClassName, string ClassId, ReportRange Range, DateTimeOffset FetchedAt,
-    Student[] Students, Report[] Reports, AbsenceNote[] AbsenceNotes, SchoolPeriod[] SchoolPeriods)
-{
-    public AttendanceMatrix Build() => new(ClassName, Range.From, Range.To, Students, Reports,
-        absenceNotes: AbsenceNotes, schoolPeriods: SchoolPeriods, classId: ClassId, fetchedAt: FetchedAt);
-}
-
 internal sealed class MatrixCache(string appFolder) : IDisposable
 {
     private const int Schema = 1;

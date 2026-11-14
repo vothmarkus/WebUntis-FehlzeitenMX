@@ -9,3 +9,7 @@ Quellcode/Installer/Ausgabe/
 *.user
 *.pfx
 *.p12
+*.apk
+*.aab
+*.keystore
+*.jks

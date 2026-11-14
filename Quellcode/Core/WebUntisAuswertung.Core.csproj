@@ -4,4 +4,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="WebUntis-Auswertung" />
+    <InternalsVisibleTo Include="WebUntis-FehlzeitenMX.Android" />
+    <EmbeddedResource Include="WebUntis/Reports.js" LogicalName="Reports.js" />
+  </ItemGroup>
 </Project>

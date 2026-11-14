@@ -1,8 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
-using WebUntisAuswertung.Core;
 
-namespace WebUntisAuswertung;
+namespace WebUntisAuswertung.Core;
 
 internal static class ReportTransfer
 {

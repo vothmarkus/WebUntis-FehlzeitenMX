@@ -19,7 +19,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
     <ProjectReference Include="../Core/WebUntisAuswertung.Core.csproj" />
-    <EmbeddedResource Include="Reports.js" LogicalName="Reports.js" />
     <EmbeddedResource Include="Assets/BKT.ico" LogicalName="BktIcon" />
     <EmbeddedResource Include="../../README.txt" LogicalName="README.txt" />
   </ItemGroup>

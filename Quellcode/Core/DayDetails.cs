@@ -1,7 +1,6 @@
 using System.Globalization;
-using WebUntisAuswertung.Core;
 
-namespace WebUntisAuswertung;
+namespace WebUntisAuswertung.Core;
 
 internal sealed record DayDetailRow(string Period, string Kind, string Subject, string Duration, string Excuse,
     string Reason, string AbsenceText, string ExcuseText);

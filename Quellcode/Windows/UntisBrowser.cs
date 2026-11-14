@@ -2,33 +2,26 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Web;
 using Microsoft.Web.WebView2.Core;
 using WebUntisAuswertung.Core;
+using static WebUntisAuswertung.Core.WebUntisReports;
 
 namespace WebUntisAuswertung;
 
-internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLogin) : IDisposable
+internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLogin) : IDisposable, IReportSupplement
 {
-    internal const string Origin = "https://bkt.webuntis.com";
-    internal const string ReportsUrl = Origin + "/class-register-reports";
-    private const string AbsencesUrl = Origin + "/absences";
-    private const string AbsenceTimesUrl = Origin + "/absence-times";
+    internal const string Origin = WebUntisReports.Origin;
+    internal const string ReportsUrl = Address;
+    private const string AbsencesUrl = Absences;
+    private const string AbsenceTimesUrl = AbsenceTimes;
     private const string MyLessonsUrl = Origin + "/my-lessons";
-    private const string TimetableUrl = Origin + "/timetable/my-teacher";
-    private const string ReportCommandName = "__fehlzeitenMxReport";
+    private const string TimetableUrl = Timetable;
     private static readonly TimeSpan ExcuseLoadTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan AbsencePreloadTimeout = TimeSpan.FromSeconds(12);
-    internal static IReadOnlyList<ReportKind> AutomaticReports { get; } =
-        [ReportKind.Absences, ReportKind.Lateness, ReportKind.Timetable];
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private static readonly string Script = ReadScript();
-    private static readonly string InstallScript = "(() => { if (location.origin !== " + JsonSerializer.Serialize(Origin) +
-        ") return; " + Script + "\nglobalThis." + ReportCommandName + " = reportCommand; })()";
+    internal static IReadOnlyList<ReportKind> AutomaticReports => Automatic;
     private readonly List<LoginWindow> loginPopups = [];
     private readonly SavedWebUntisSession savedSession = new(appFolder);
     private readonly Dictionary<int, SchoolPeriod[]> schoolPeriods = [];
@@ -1294,11 +1287,11 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         }, Json);
         try
         {
-            var command = "globalThis." + ReportCommandName + "(" + request + ")";
-            var result = await browser.ExecuteScriptAsync($"typeof globalThis.{ReportCommandName} === 'function' ? {command} : 'uninitialized'")
+            var command = "globalThis." + CommandName + "(" + request + ")";
+            var result = await browser.ExecuteScriptAsync($"typeof globalThis.{CommandName} === 'function' ? {command} : 'uninitialized'")
                 .WaitAsync(commandTimeout ?? TimeSpan.FromSeconds(6), token);
             if (result == "\"uninitialized\"")
-                result = await browser.ExecuteScriptAsync(InstallScript + ";\nglobalThis." + ReportCommandName + "?.(" + request + ")")
+                result = await browser.ExecuteScriptAsync(InstallScript + ";\nglobalThis." + CommandName + "?.(" + request + ")")
                     .WaitAsync(commandTimeout ?? TimeSpan.FromSeconds(6), token);
             return JsonSerializer.Deserialize<ReportState>(result, Json) ?? new ReportState();
         }
@@ -1493,21 +1486,6 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         {
             download.ReportNavigation = true;
         }
-    }
-
-    private static bool IsReportRoute(Uri uri) =>
-        uri.AbsolutePath.StartsWith("/WebUntis/", StringComparison.OrdinalIgnoreCase) &&
-        uri.AbsolutePath.EndsWith(".do", StringComparison.OrdinalIgnoreCase) &&
-        uri.AbsolutePath.Contains("report", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsReadyCsvLink(string address)
-    {
-        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || !IsSchoolAddress(address) ||
-            uri.UserInfo.Length != 0 || !uri.AbsolutePath.Equals("/WebUntis/reports.do", StringComparison.OrdinalIgnoreCase))
-            return false;
-        var query = HttpUtility.ParseQueryString(uri.Query);
-        return string.Equals(query["format"], "csv", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrEmpty(query["msgId"]);
     }
 
     private bool IsReportSender(PendingDownload download, object? sender) =>
@@ -1734,23 +1712,6 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         supplementFallback.Dispose();
     }
 
-    private static bool IsSchoolAddress(string? value)
-    {
-        if (value?.StartsWith("blob:", StringComparison.OrdinalIgnoreCase) == true) value = value[5..];
-        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
-            uri.GetLeftPart(UriPartial.Authority).Equals(Origin, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ReadScript()
-    {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Reports.js")
-            ?? throw new InvalidOperationException("Die WebUntis-Berichtssteuerung fehlt.");
-        using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
-    }
-
-    private sealed record ReportSelection(string ClassId, DateOnly From, DateOnly To, bool ExcusedOnly = false);
-    private sealed record AbsencePerson(string Id, string Name);
     private sealed record EditorMessage(string EditorId, string Action, bool SaveRequested, int Width, int Height);
     private sealed class SupplementPage(LoginWindow window, int year) : IDisposable
     {
@@ -1762,78 +1723,6 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         public AbsenceListEntry[]? Absences { get; set; }
         public AbsenceNote[]? AbsenceNotes { get; set; }
         public void Dispose() => window.Dispose();
-    }
-
-    private sealed record LessonChoice(string Key, string[] Classes, string Group, string Subject);
-    private sealed record PeriodRow(int Number, string Start, string End)
-    {
-        public SchoolPeriod? ToPeriod() => Number > 0 && CsvReport.ReadTime(Start) is { } from &&
-            CsvReport.ReadTime(End) is { } to && from < to ? new SchoolPeriod(Number, from, to) : null;
-    }
-
-    private sealed class ReportState
-    {
-        public string Stage { get; set; } = "";
-        public string? Error { get; set; }
-        public string? ClassId { get; set; }
-        public bool AtReports { get; set; }
-        public bool HasFrame { get; set; }
-        public bool HasStudentFilter { get; set; }
-        public bool AllStudents { get; set; }
-        public bool HasDateInputs { get; set; }
-        public string? FormStamp { get; set; }
-        public string? RosterStamp { get; set; }
-        public bool RangeReady { get; set; }
-        public bool FlagsReady { get; set; }
-        public string? ChangedField { get; set; }
-        public bool ReloadExpected { get; set; }
-        public bool ExportPrepared { get; set; }
-        public bool ExportClicked { get; set; }
-        public double? ExportX { get; set; }
-        public double? ExportY { get; set; }
-        public string? CsvUrl { get; set; }
-        public bool AmbiguousCsvLinks { get; set; }
-        public bool EmptyReport { get; set; }
-        public bool SchoolYearSelected { get; set; }
-        public string? GlobalYear { get; set; }
-        public bool GlobalYearOption { get; set; }
-        public bool GlobalYearUnavailable { get; set; }
-        public bool SchoolYearRequested { get; set; }
-        public bool SchoolYearOption { get; set; }
-        public bool SchoolYearUnavailable { get; set; }
-        public double? SchoolYearX { get; set; }
-        public double? SchoolYearY { get; set; }
-        public string? SchoolYearFrom { get; set; }
-        public string? SchoolYearTo { get; set; }
-        public bool NotesReady { get; set; }
-        public bool NotesUnavailable { get; set; }
-        public AbsenceNote[] AbsenceNotes { get; set; } = [];
-        public bool AbsenceActionsReady { get; set; }
-        public AbsenceListEntry[] EditableAbsences { get; set; } = [];
-        public bool AbsenceEditorRequested { get; set; }
-        public bool AbsenceEditorVisible { get; set; }
-        public int EditorWidth { get; set; }
-        public int EditorHeight { get; set; }
-        public bool TimesReady { get; set; }
-        public AbsenceTimeRow[] Times { get; set; } = [];
-        public PeriodRow[] Periods { get; set; } = [];
-        public LessonChoice[] Lessons { get; set; } = [];
-        public Student[] Classes { get; set; } = [];
-        public Student[] Students { get; set; } = [];
-    }
-
-    private sealed record AbsenceTimeRow(string Name, string Day, string Subject, string Start, string End, string Units,
-        string Minutes, string Status, string Reason, string Text, bool Counts)
-    {
-        public AttendanceEntry? ToEntry(ReportKind kind)
-        {
-            if (CsvReport.ReadDay(Day) is not { } day || !int.TryParse(Minutes, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes) || minutes < 0)
-                return null;
-            var late = kind == ReportKind.Lateness;
-            return new AttendanceEntry(Name, "", day, late ? EntryKind.Late : EntryKind.Absent, CsvReport.ReadExcuse(Status),
-                CsvReport.ReadTime(Start), CsvReport.ReadTime(End), Subject: Subject, Minutes: minutes,
-                Units: late ? null : CsvReport.ReadDecimal(Units), Counts: Counts, Reason: Reason, AbsenceText: Text);
-        }
     }
 
     private sealed record ReportPage(string? Notice, string? CsvUrl);
@@ -1894,18 +1783,4 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
     }
 }
 
-internal sealed record ReportCsv(ReportKind Kind, byte[] Content);
 internal sealed record LessonEmailBatch(RosterEmail[] Emails, int Read, int Total, string? Failure);
-
-internal sealed record AbsenceListEntry(string Id, string StudentId, string StudentName, DateOnly From, DateOnly To,
-    string Start, string End, string Status, string Reason, bool CanExcuse);
-
-internal sealed class ReportBatch(Student[] students, string classId)
-{
-    public string ClassId { get; } = classId;
-    public Student[] Students { get; } = students;
-    public List<ReportCsv> Csvs { get; } = [];
-    public List<ReportKind> EmptyReports { get; } = [];
-    public List<string> Notes { get; } = [];
-
-}
