@@ -11,6 +11,14 @@ Die Startseite lädt ihre Klassen automatisch. Unter Meine Klassen
 du Klasse und Zeitraum frei wählen. Ein Klick auf einen Tag in
 der Matrix zeigt die Details zur ausgewählten Person.
 
+Abwesenheiten bearbeiten
+Auf der Startseite öffnet ein Rechtsklick auf eine Fehlzeit oder
+Verspätung die zugehörigen WebUntis-Einträge. Der Zeitraum öffnet
+den Originaldialog der Abwesenheit. Der Eintrag «Entschuldigung»
+öffnet den WebUntis-Statusdialog, soweit WebUntis ihn anbietet.
+Speichere im WebUntis-Dialog. Anschließend liest die App die
+betroffene Klasse neu ein.
+
 CSV für den Notenrechner
 Unter Einstellungen → CSV-Download speicherst du die Namenslisten
 der unter Meine Klassen angehakten Klassen in einer CSV-Datei.

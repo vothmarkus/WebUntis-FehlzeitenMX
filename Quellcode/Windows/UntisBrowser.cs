@@ -435,6 +435,160 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         }) ?? [];
     }
 
+    public async Task<AbsenceListEntry[]> ReadAbsenceActionsAsync(AttendanceMatrix matrix, Student student, DateOnly day,
+        IProgress<string> progress, CancellationToken token)
+    {
+        loginCanceled = false;
+        var year = SchoolYears.StartYear(matrix.From);
+        try
+        {
+            await OpenReportsForYearAsync(year, progress, token);
+            progress.Report("Passende WebUntis-Abwesenheiten werden gesucht …");
+            var page = await OpenAbsencePageAsync(year, token);
+            var state = await WaitForAbsenceActionsAsync(page, matrix, student, day, token);
+            return state.EditableAbsences;
+        }
+        finally { HideLogin(); }
+    }
+
+    // The WebUntis form owns validation and the save operation. We only open and show it.
+    public async Task<bool> ShowAbsenceEditorAsync(AttendanceMatrix matrix, Student student, DateOnly day,
+        AbsenceListEntry row, bool excuse, IProgress<string> progress, CancellationToken token)
+    {
+        loginCanceled = false;
+        var year = SchoolYears.StartYear(matrix.From);
+        try
+        {
+            await OpenReportsForYearAsync(year, progress, token);
+            progress.Report("Originaldialog in WebUntis wird geöffnet …");
+            var page = await OpenAbsencePageAsync(year, token);
+            return await ShowAbsenceEditorOnPageAsync(page, matrix, student, day, row, excuse, token);
+        }
+        finally { HideLogin(); }
+    }
+
+    private async Task<SupplementPage> OpenAbsencePageAsync(int year, CancellationToken token)
+    {
+        var page = await OpenSupplementPageAsync(AbsencesUrl, year, token);
+        if (page.Redirected || page.Status >= 400 || page.Browser.Source != AbsencesUrl)
+        {
+            page.Redirected = false;
+            page.Status = 0;
+            await NavigateSupplementAsync(page.Browser, AbsencesUrl, token);
+        }
+        return page;
+    }
+
+    private async Task<ReportState> WaitForAbsenceActionsAsync(SupplementPage page, AttendanceMatrix matrix,
+        Student student, DateOnly day, CancellationToken token, AbsenceListEntry? row = null, bool excuse = false, string? editorId = null)
+    {
+        var action = row == null ? "absenceActions" : "openAbsenceEditor";
+        var year = SchoolYears.StartYear(matrix.From);
+        // The native date filter includes absences spanning the selected day.
+        var selection = new ReportSelection(matrix.ClassId, day, day);
+        var id = student.Id.Length > 0 && student.Id.All(char.IsAsciiDigit) ? student.Id : "";
+        if (id.Length == 0 && matrix.Students.Count(candidate =>
+                AttendanceMatrix.Fold(candidate.Name) == AttendanceMatrix.Fold(student.Name)) != 1)
+            throw new InvalidOperationException("Für diese Person gibt es keine eindeutige WebUntis-Schülerkennung.");
+        var person = new AbsencePerson(id, student.Name);
+        var watch = Stopwatch.StartNew();
+        string? changedForm = null;
+        while (watch.Elapsed < TimeSpan.FromSeconds(12))
+        {
+            token.ThrowIfCancellationRequested();
+            if (page.Redirected || page.Status is 401 or 403)
+                throw new InvalidOperationException("WebUntis erlaubt den Zugriff auf diese Abwesenheitsliste in der aktuellen Sitzung nicht.");
+            var state = await CommandAsync(action, token, selection, waitForFormStamp: changedForm, targetSchoolYear: year,
+                className: matrix.ClassName, target: page.Browser, absencePerson: person, absenceDay: day, absenceRow: row,
+                excuseEditor: excuse, editorId: editorId);
+            CheckSupplementSession(state);
+            if (state.Stage == "denied")
+                throw new InvalidOperationException("WebUntis meldet fehlende Berechtigung für die Abwesenheitsliste.");
+            if (state.Error != null) throw new InvalidOperationException(state.Error);
+            if (state.AbsenceActionsReady || state.AbsenceEditorRequested) return state;
+            if (state.ChangedField != null) changedForm = state.FormStamp;
+            await Task.Delay(160, token);
+        }
+        throw new InvalidOperationException("WebUntis hat die gefilterte Abwesenheitsliste nicht bestätigt.");
+    }
+
+    private async Task<bool> ShowAbsenceEditorOnPageAsync(SupplementPage page, AttendanceMatrix matrix, Student student,
+        DateOnly day, AbsenceListEntry row, bool excuse, CancellationToken token)
+    {
+        var editorId = Guid.NewGuid().ToString("N");
+        var year = SchoolYears.StartYear(matrix.From);
+        var saveRequested = false;
+        try
+        {
+            await WaitForAbsenceActionsAsync(page, matrix, student, day, token, row, excuse, editorId);
+            var watch = Stopwatch.StartNew();
+            while (!(await EditorStateAsync()).AbsenceEditorVisible)
+            {
+                if (watch.Elapsed >= TimeSpan.FromSeconds(7))
+                    throw new InvalidOperationException("WebUntis hat den Originaldialog nicht geöffnet.");
+                await Task.Delay(120, token);
+            }
+
+            var window = page.Window;
+            using var watchDialog = CancellationTokenSource.CreateLinkedTokenSource(token);
+            using var timer = new System.Windows.Forms.Timer { Interval = 180 };
+            Exception? dialogError = null;
+            timer.Tick += async (_, _) =>
+            {
+                timer.Stop();
+                try
+                {
+                    var state = await EditorStateAsync(watchDialog.Token);
+                    if (!window.Visible || window.IsDisposed) return;
+                    saveRequested |= state.SaveRequested;
+                    if (state.AbsenceEditorClosed)
+                        window.DialogResult = DialogResult.OK;
+                    else timer.Start();
+                }
+                catch (OperationCanceledException)
+                {
+                    if (window.Visible && !window.IsDisposed) window.DialogResult = DialogResult.Cancel;
+                }
+                catch (Exception error)
+                {
+                    if (!window.Visible || window.IsDisposed) return;
+                    dialogError = error;
+                    window.DialogResult = DialogResult.Cancel;
+                }
+            };
+            var result = window.ShowForAbsence(owner, excuse ? "Entschuldigung · WebUntis" : "Abwesenheit · WebUntis", () =>
+            {
+                window.FocusBrowser();
+                timer.Start();
+            });
+            timer.Stop();
+            watchDialog.Cancel();
+            if (dialogError != null) throw dialogError;
+            token.ThrowIfCancellationRequested();
+            if (result == DialogResult.Cancel && !saveRequested)
+                saveRequested = (await EditorStateAsync()).SaveRequested;
+            return saveRequested;
+        }
+        finally
+        {
+            if (supplementPages.TryGetValue(AbsencesUrl, out var active) && active == page)
+            {
+                supplementPages.Remove(AbsencesUrl);
+                page.Dispose();
+            }
+        }
+
+        async Task<ReportState> EditorStateAsync(CancellationToken? probeToken = null)
+        {
+            var state = await CommandAsync("absenceEditorState", probeToken ?? token, targetSchoolYear: year, target: page.Browser, editorId: editorId);
+            if (page.Redirected || page.Status is 401 or 403)
+                throw new InvalidOperationException("Die WebUntis-Sitzung ist abgelaufen oder der Dialog wurde gesperrt.");
+            if (state.Error != null) throw new InvalidOperationException(state.Error);
+            CheckSupplementSession(state);
+            return state;
+        }
+    }
+
     public async Task<Report?> ReadAbsenceTimesAsync(string className, ReportBatch batch, ReportRange range, ReportKind kind,
         IProgress<string> progress, CancellationToken token, bool reusePage = false)
     {
@@ -531,12 +685,26 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
             token.ThrowIfCancellationRequested();
             if (view == null || disposed) throw new InvalidOperationException("Die WebUntis-Sitzung wurde beendet.");
             var page = new SupplementPage(window, year);
+            if (address == AbsencesUrl)
+            {
+                browser.Settings.AreDefaultScriptDialogsEnabled = true;
+                browser.Settings.AreDefaultContextMenusEnabled = false;
+                browser.Settings.AreDevToolsEnabled = false;
+            }
             browser.NavigationStarting += (_, args) =>
             {
                 page.Status = 0;
                 if (IsSchoolAddress(args.Uri) || args.Uri == "about:blank") return;
                 args.Cancel = true;
                 page.Redirected = true;
+            };
+            browser.FrameNavigationStarting += (_, args) =>
+            {
+                if (address == AbsencesUrl && args.Uri != "about:blank" && !IsSchoolAddress(args.Uri))
+                {
+                    args.Cancel = true;
+                    page.Redirected = true;
+                }
             };
             browser.NavigationCompleted += (_, args) => page.Status = args.HttpStatusCode;
             browser.NewWindowRequested += (_, args) => args.Handled = true;
@@ -940,7 +1108,8 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
     private async Task<ReportState> CommandAsync(string action, CancellationToken token, ReportSelection? selection = null,
         ReportKind kind = ReportKind.Absences, bool includeClasses = false, bool roster = false, string? exportId = null,
         string? waitForFormStamp = null, int? targetSchoolYear = null, string? className = null, LessonChoice? lesson = null,
-        CoreWebView2? target = null)
+        CoreWebView2? target = null, AbsencePerson? absencePerson = null, DateOnly? absenceDay = null,
+        AbsenceListEntry? absenceRow = null, bool excuseEditor = false, string? editorId = null)
     {
         var browser = target ?? view;
         if (browser == null) return new ReportState();
@@ -953,7 +1122,8 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
             from = selection?.From.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             to = selection?.To.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             kind = kind.ToString(), excusedOnly = selection?.ExcusedOnly == true, includeClasses, roster, exportId, waitForFormStamp,
-            targetSchoolYear, className, lateOnly = kind == ReportKind.Lateness, lesson
+            targetSchoolYear, className, lateOnly = kind == ReportKind.Lateness, lesson, absencePerson, absenceDay,
+            absenceRow, excuseEditor, editorId
         }, Json);
         try
         {
@@ -1413,9 +1583,11 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
     }
 
     private sealed record ReportSelection(string ClassId, DateOnly From, DateOnly To, bool ExcusedOnly = false);
+    private sealed record AbsencePerson(string Id, string Name);
     private sealed class SupplementPage(LoginWindow window, int year) : IDisposable
     {
         public CoreWebView2 Browser => window.Browser;
+        public LoginWindow Window => window;
         public int Year { get; } = year;
         public int Status { get; set; }
         public bool Redirected { get; set; }
@@ -1466,6 +1638,12 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         public bool NotesReady { get; set; }
         public bool NotesUnavailable { get; set; }
         public AbsenceNote[] AbsenceNotes { get; set; } = [];
+        public bool AbsenceActionsReady { get; set; }
+        public AbsenceListEntry[] EditableAbsences { get; set; } = [];
+        public bool AbsenceEditorRequested { get; set; }
+        public bool AbsenceEditorVisible { get; set; }
+        public bool AbsenceEditorClosed { get; set; }
+        public bool SaveRequested { get; set; }
         public bool TimesReady { get; set; }
         public AbsenceTimeRow[] Times { get; set; } = [];
         public PeriodRow[] Periods { get; set; } = [];
@@ -1548,6 +1726,9 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
 
 internal sealed record ReportCsv(ReportKind Kind, byte[] Content);
 internal sealed record LessonEmailBatch(RosterEmail[] Emails, int Read, int Total, string? Failure);
+
+internal sealed record AbsenceListEntry(string Id, DateOnly From, DateOnly To, string Start, string End,
+    string Status, string Reason, bool CanEdit, bool CanExcuse);
 
 internal sealed class ReportBatch(Student[] students, string classId)
 {

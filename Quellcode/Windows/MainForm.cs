@@ -25,6 +25,7 @@ internal sealed class MainForm : Form
     private readonly HashSet<string> loadedHome = new(ClassComparer);
     private readonly Dictionary<string, AttendanceMatrix> schoolYearMatrices = new(ClassComparer);
     private readonly DetailsView homeDetails = new();
+    private ContextMenuStrip? homeAbsenceMenu;
     private readonly FlowLayoutPanel myClassButtons = new()
     {
         Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MaximumSize = new Size(0, 126),
@@ -177,6 +178,7 @@ internal sealed class MainForm : Form
         };
         FormClosed += (_, _) =>
         {
+            homeAbsenceMenu?.Dispose();
             updateCheckLifetime.Cancel();
             updateCheckLifetime.Dispose();
             browser.Dispose();
@@ -796,7 +798,7 @@ internal sealed class MainForm : Form
         token.ThrowIfCancellationRequested();
         var matrix = await Task.Run(() => new AttendanceMatrix(name, range.From, range.To, batch.Students,
             reports.Append(new Report(ReportKind.Timetable, [], [], batch.Notes.ToArray(), Complete: false)),
-            absenceNotes: absenceNotes, schoolPeriods: schoolPeriods), token);
+            absenceNotes: absenceNotes, schoolPeriods: schoolPeriods, classId: batch.ClassId), token);
         reportProgress?.Invoke(steps, steps);
         return matrix;
     }
@@ -832,6 +834,7 @@ internal sealed class MainForm : Form
                 view = new MatrixView(stacked: true) { Margin = new Padding(0, 0, 0, 14) };
                 view.SetStatus(name);
                 view.DaySelected += ShowHomeDetails;
+                view.AbsenceMenuRequested += ShowHomeAbsenceMenu;
                 homeViews.Add(name, view);
             }
             homeRows.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -847,6 +850,115 @@ internal sealed class MainForm : Form
     {
         foreach (var view in homeViews.Values.Where(view => view != source)) view.ClearSelection();
         homeDetails.ShowDetails(details);
+    }
+
+    private async void ShowHomeAbsenceMenu(MatrixView source, AttendanceMatrix matrix, Student student, DateOnly day, Point position)
+    {
+        if (running != null || tabs.SelectedTab != homePage || matrix.ClassId.Length == 0 ||
+            !homeViews.TryGetValue(matrix.ClassName, out var activeView) || activeView != source) return;
+
+        homeAbsenceMenu?.Close();
+        var menu = new ContextMenuStrip { ShowImageMargin = false, AccessibleName = "WebUntis-Abwesenheiten" };
+        homeAbsenceMenu = menu;
+        menu.Closed += (_, _) =>
+        {
+            if (homeAbsenceMenu == menu) homeAbsenceMenu = null;
+            BeginInvoke(menu.Dispose);
+        };
+        var message = new ToolStripMenuItem("WebUntis-Einträge werden gesucht …") { Enabled = false };
+        menu.Items.Add(message);
+        menu.Show(position);
+        await RunAsync(async (token, progress) =>
+        {
+            using var lookup = CancellationTokenSource.CreateLinkedTokenSource(token);
+            ToolStripDropDownClosedEventHandler closed = (_, _) => lookup.Cancel();
+            menu.Closed += closed;
+            try
+            {
+                var rows = await browser.ReadAbsenceActionsAsync(matrix, student, day, progress, lookup.Token);
+                if (!menu.Visible) return;
+                var available = rows.Where(row => row.CanEdit || row.CanExcuse).OrderBy(row => row.From)
+                    .ThenBy(row => CsvReport.ReadTime(row.Start)).ThenBy(row => row.To)
+                    .ThenBy(row => CsvReport.ReadTime(row.End)).ToArray();
+                if (available.Length == 0)
+                {
+                    message.Text = rows.Length == 0
+                        ? "Keine passende WebUntis-Abwesenheit gefunden."
+                        : "WebUntis bietet für diese Einträge keine Bearbeitung an.";
+                    return;
+                }
+                menu.Items.Remove(message);
+                message.Dispose();
+                foreach (var row in available)
+                {
+                    var period = row.From == row.To ? $"{row.From:dd.MM.} · {row.Start}–{row.End}" :
+                        $"{row.From:dd.MM.} {row.Start} – {row.To:dd.MM.} {row.End}";
+                    if (row.Status.Length > 0) period += $" · {row.Status}";
+                    if (row.CanEdit) AddAction(period, row, excuse: false);
+                    if (row.CanExcuse) AddAction($"Entschuldigung · {period}", row, excuse: true);
+                }
+                menu.ShowItemToolTips = true;
+            }
+            catch (OperationCanceledException) when (lookup.IsCancellationRequested && !token.IsCancellationRequested) { }
+            catch (Exception error) when (error is InvalidOperationException or IOException or TimeoutException or
+                InvalidDataException or System.Runtime.InteropServices.COMException or System.Text.Json.JsonException)
+            {
+                if (menu.Visible && !message.IsDisposed) message.Text = error.Message;
+                else if (tabs.SelectedTab == homePage) SetPageStatus(homePage, "Die WebUntis-Abwesenheiten konnten nicht geladen werden.");
+            }
+            finally { menu.Closed -= closed; }
+        });
+
+        void AddAction(string label, AbsenceListEntry row, bool excuse)
+        {
+            var item = new ToolStripMenuItem(label)
+            {
+                ToolTipText = row.Reason.Length > 0 ? row.Reason :
+                    excuse ? "Entschuldigung in WebUntis öffnen" : "Abwesenheit in WebUntis bearbeiten"
+            };
+            item.Click += (_, _) => BeginInvoke(async () =>
+            {
+                if (IsDisposed || tabs.SelectedTab != homePage || source.IsDisposed) return;
+                await RunAsync(async (token, progress) =>
+                {
+                    var saveRequested = await browser.ShowAbsenceEditorAsync(matrix, student, day, row, excuse, progress, token);
+                    if (saveRequested) await ReloadEditedClassAsync(source, matrix, token, progress);
+                });
+            });
+            menu.Items.Add(item);
+        }
+    }
+
+    private async Task ReloadEditedClassAsync(MatrixView source, AttendanceMatrix previous,
+        CancellationToken token, IProgress<string> progress)
+    {
+        var name = previous.ClassName;
+        var range = new ReportRange(previous.From, previous.To);
+        var regularMatrix = matrixView.CurrentMatrix;
+        loadedHome.Remove(name);
+        schoolYearMatrices.Remove(name);
+        progress.Report($"{name} · Fehlzeiten werden neu gelesen …");
+        var updated = await ReadMatrixAsync(name, range, progress, token, ShowProgress);
+        if (updated.HasAbsenceReport && updated.HasLatenessReport && updated.HasTimetable)
+            schoolYearMatrices[name] = updated;
+        loadedHome.Add(name);
+        if (ClassComparer.Equals(openedMyClass, name))
+        {
+            myClassDetails.ShowDetails(DayDetails.Empty);
+            myClassView.SetMatrix(updated, keepPosition: true);
+        }
+        if (regularMatrix?.ClassId == previous.ClassId && SchoolYears.StartYear(regularMatrix.From) == SchoolYears.StartYear(previous.From))
+        {
+            if (regularMatrix.From == updated.From && regularMatrix.To == updated.To)
+            {
+                matrixDetails.ShowDetails(DayDetails.Empty);
+                matrixView.SetMatrix(updated, keepPosition: true);
+            }
+            else ResetMatrix();
+        }
+        homeDetails.ShowDetails(DayDetails.Empty);
+        source.SetMatrix(updated, keepPosition: true);
+        SetPageStatus(homePage, $"{name} · Aktuelle Fehlzeiten aus WebUntis geladen");
     }
 
     private void SynchronizeMyClassButtons()

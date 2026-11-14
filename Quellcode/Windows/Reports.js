@@ -7,6 +7,7 @@ function reportCommand(request) {
     const documents = [document, ...frames.map(frame => frame.contentDocument).filter(Boolean)];
     const exportHost = document.documentElement;
     const activeExport = exportHost?.untisAuswertungExport;
+    const editor = exportHost?.fehlzeitenMxAbsenceEditor;
 
     function reportNotices() {
         return documents.flatMap(doc => [...doc.querySelectorAll('[role="alert"]')].filter(visible));
@@ -101,10 +102,16 @@ function reportCommand(request) {
     if (['lessonList', 'openLessonReport', 'lessonBack', 'prepareLessonExport', 'lessonExportFallback'].includes(request.action))
         return lessonCommand();
     const readingNotes = request.action === "absenceNotes";
+    const absenceAction = ["absenceActions", "openAbsenceEditor", "absenceEditorState"].includes(request.action);
+    const absenceList = readingNotes || absenceAction;
     const readingTimes = request.action === "absenceTimes";
-    if ((readingNotes || readingTimes) && globalYear && globalYear !== String(request.targetSchoolYear))
+    if (absenceAction && location.pathname !== "/absences")
+        return { stage: documents.some(loginForm) ? "login" : "loading" };
+    if ((absenceList || readingTimes) && globalYear && globalYear !== String(request.targetSchoolYear))
         return { stage: "wrongYear" };
-    const formId = readingNotes ? "absenceListForm" : readingTimes ? "absenceTimesForm" : "classregReportForm";
+    if (request.action === "absenceEditorState")
+        return documents.some(loginForm) ? { stage: "login" } : absenceEditorState();
+    const formId = absenceList ? "absenceListForm" : readingTimes ? "absenceTimesForm" : "classregReportForm";
     const classSelector = 'select[name="klasseOrStudentgroupId"],select[id="classregReportForm.idklasseId"]';
     const form = documents.map(doc => doc.getElementById(formId))
         .find(item => visible(item?.querySelector(classSelector)));
@@ -144,7 +151,7 @@ function reportCommand(request) {
         classId: classSelect.value,
         hasStudentFilter: !!all,
         allStudents: !!all && studentSelect.value === all.value,
-        hasDateInputs: dateInputs.every(visible) && (readingNotes || readingTimes || request.action === "configureRange" ||
+        hasDateInputs: dateInputs.every(visible) && (absenceList || readingTimes || request.action === "configureRange" ||
             !!form.querySelector('button[aria-label="CSV-Ausgabe"]')),
         formStamp,
         rosterStamp: rosterStamp ? rosterStamp + ":" + [...studentSelect.options].map(option => option.value).join("|") : null,
@@ -158,6 +165,7 @@ function reportCommand(request) {
         control.dispatchEvent(new page.Event("input", { bubbles: true }));
         control.dispatchEvent(new page.Event("change", { bubbles: true }));
     };
+    if (absenceAction) return absenceActions();
     if (request.action === "selectClass") {
         const choice = options(classSelect).find(option => option.id === request.classId);
         if (!choice) return { error: "Die ausgewählte Klasse ist im Berichtsformular nicht verfügbar." };
@@ -387,21 +395,182 @@ function reportCommand(request) {
         field.dispatchEvent(new page.Event("change", { bubbles: true }));
         field.dispatchEvent(new page.FocusEvent("blur"));
     }
-    const wantedDates = [request.from, request.to];
-    const dateMatches = dateInputs.map((field, i) => {
+    function matchesDate(field, i) {
         const widget = dateWidget(field);
         const widgetDate = asIso(widget?.get?.("value"));
-        return asIso(field.value) === wantedDates[i] &&
-            (!widget || widgetDate === wantedDates[i]) &&
+        const wanted = i === 0 ? request.from : request.to;
+        return asIso(field.value) === wanted &&
+            (!widget || widgetDate === wanted) &&
             field.getAttribute("aria-invalid") !== "true" &&
             field.closest('[role="combobox"]')?.getAttribute("aria-invalid") !== "true";
-    });
+    }
     function changeDate() {
         const order = request.from > asIso(dateInputs[1].value) ? [1, 0] : [0, 1];
-        const index = order.find(item => !dateMatches[item]);
-        setDate(dateInputs[index], wantedDates[index]);
+        const index = order.find(i => !matchesDate(dateInputs[i], i));
+        setDate(dateInputs[index], index === 0 ? request.from : request.to);
         return index === 0 ? "Startdatum" : "Enddatum";
     }
+
+    function absenceActions() {
+        if (request.waitForFormStamp === formStamp) return state;
+        if (!globalYear) return state;
+        const opening = request.action === "openAbsenceEditor";
+        const day = request.absenceDay;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day ?? "") || day !== request.from || day !== request.to)
+            return unavailable("Der gewünschte WebUntis-Tag konnte nicht bestätigt werden.");
+        const person = request.absencePerson;
+        const key = absenceLabel;
+        const wantedClass = options(classSelect).filter(option =>
+            option.id === request.classId && key(option.name) === key(request.className));
+        if (wantedClass.length !== 1) return unavailable("Die Klasse ist in WebUntis nicht eindeutig verfügbar.");
+        if (classSelect.value !== wantedClass[0].id) {
+            changeSelect(classSelect, wantedClass[0].id);
+            return changed("Klasse");
+        }
+        const students = options(studentSelect);
+        const matches = students.filter(option => /^\d+$/.test(option.id) &&
+            key(option.name) === key(person?.name) && (!person?.id || option.id === person.id));
+        if (matches.length !== 1) return unavailable("Die Person konnte in der WebUntis-Klassenliste nicht eindeutig bestätigt werden.");
+        const student = matches[0];
+        if (studentSelect.value !== student.id) {
+            changeSelect(studentSelect, student.id);
+            return changed("Schüler*in");
+        }
+        for (const name of ["absenceReasonId", "excuseStatusId", "guardianNotified"]) {
+            const filter = form.querySelector(`select[name="${name}"]`);
+            const unfiltered = [...(filter?.options ?? [])].find(option => !option.disabled && /^[- ]*alle\b/i.test(clean(option.text)));
+            if (unfiltered && filter.value !== unfiltered.value) {
+                changeSelect(filter, unfiltered.value);
+                return changed(name);
+            }
+        }
+        const minors = form.querySelector('input[type="checkbox"][name="withMinorStudentsOnly"]:checked');
+        if (minors) {
+            if (minors.disabled) return unavailable("WebUntis bietet nur eine gefilterte Abwesenheitsliste an.");
+            minors.click();
+            return changed("Altersfilter");
+        }
+        const search = form.querySelector('input[name="searchString"]');
+        if (search?.value.trim()) {
+            const submit = form.querySelector("button.icon-search");
+            if (!enabled(submit)) return unavailable("Der Suchfilter konnte in WebUntis nicht zurückgesetzt werden.");
+            search.value = "";
+            submit.click();
+            return changed("Suche");
+        }
+        if (!state.hasDateInputs || dateInputs.some(field => !field)) return state;
+        if (!dateInputs.every(matchesDate)) return changed(changeDate());
+        const table = doc.getElementById("absenceListForm.absences");
+        if (!table)
+            return opening ? unavailable("Der Eintrag fehlt in der aktuellen WebUntis-Abwesenheitsliste.") :
+                { ...state, absenceActionsReady: true, editableAbsences: [] };
+        const headings = [...(table.tHead?.rows[0]?.cells ?? [])].map(cell => key(cell.textContent));
+        const fields = ["schüler*innen", "klasse", "von", "beginn", "bis", "ende", "status"].map(label => headings.indexOf(label));
+        if (fields.some(index => index < 0)) return unavailable("Die Spalten der WebUntis-Abwesenheitsliste konnten nicht bestätigt werden.");
+        if (form.querySelector('.pagination,.pager,[class*="paging" i]'))
+            return unavailable("WebUntis liefert nur einen Ausschnitt der Abwesenheitsliste.");
+        const reasonField = headings.indexOf("grund");
+        const [personField, classField, fromField, startField, toField, endField, statusField] = fields;
+        const matchesById = new Map();
+        for (const row of [...table.tBodies].flatMap(body => [...body.rows])) {
+            if (row.cells.length !== headings.length) continue;
+            const id = row.querySelector('input[type="checkbox"][name="selId"]')?.value;
+            if (!id || !/^\d+$/.test(id)) continue;
+            const text = index => clean(row.cells[index]?.textContent);
+            if (key(text(personField)) !== key(student.name) || key(text(classField)) !== key(request.className))
+                return unavailable("WebUntis zeigt Zeilen außerhalb des bestätigten Filters an.");
+            const fromDay = asIso(text(fromField));
+            const toDay = asIso(text(toField));
+            if (!fromDay || !toDay || fromDay > toDay || fromDay > day || day > toDay) continue;
+            if (matchesById.has(id)) return unavailable("WebUntis zeigt dieselbe Abwesenheitskennung mehrfach an.");
+            const edit = row.querySelector("button.icon-edit");
+            const statusCell = row.cells[statusField];
+            const excuse = statusCell.querySelector("button.icon-questionmark") ??
+                [...statusCell.querySelectorAll("a[href]")].find(link =>
+                    /^javascript:absenceListForm\.excuseAbsence\(\s*(\d+)\s*,\s*\d+\s*\);\s*void\(0\);?$/i
+                        .exec(link.getAttribute("href") ?? "")?.[1] === id);
+            const status = clean(excuse?.title || excuse?.textContent || statusCell.textContent).replace(/\s*\/\s*\d+$/, "");
+            matchesById.set(id, {
+                value: { id, from: fromDay, to: toDay, start: absenceTime(text(startField)), end: absenceTime(text(endField)),
+                    status, reason: text(reasonField),
+                    canEdit: enabled(edit), canExcuse: enabled(excuse) },
+                edit, excuse
+            });
+        }
+        if (!opening)
+            return { ...state, absenceActionsReady: true, editableAbsences: [...matchesById.values()].map(row => row.value) };
+        const row = matchesById.get(request.absenceRow?.id);
+        const picked = request.absenceRow;
+        const control = request.excuseEditor ? row?.excuse : row?.edit;
+        if (!row || !enabled(control) || row.value.from !== picked.from || row.value.to !== picked.to ||
+            row.value.start !== picked.start || row.value.end !== picked.end)
+            return unavailable("Dieser Eintrag hat sich geändert oder ist gesperrt. Öffne das Kontextmenü erneut.");
+        if (editor || [...doc.querySelectorAll('[role="dialog"]')].some(visible))
+            return unavailable("In der WebUntis-Ansicht ist bereits ein Dialog geöffnet.");
+        const activeEditor = { id: request.editorId, doc, person: student.name, row: row.value,
+            excuse: request.excuseEditor, saveRequested: false };
+        exportHost.fehlzeitenMxAbsenceEditor = activeEditor;
+        doc.addEventListener("click", event => {
+            const button = event.target?.closest?.('button,[role="button"]');
+            if (button && activeEditor.dialog?.contains(button) && /^speichern$/i.test(clean(button.textContent).replace(/^●\s*/, "")))
+                activeEditor.saveRequested = true;
+        }, true);
+        control.click();
+        return { ...state, absenceEditorRequested: true };
+
+        function changed(changedField) { return { ...state, changedField }; }
+        function unavailable(error) { return { ...state, error }; }
+    }
+
+    function enabled(control) {
+        return visible(control) && !control.disabled && control.getAttribute("aria-disabled") !== "true" &&
+            !control.classList.contains("dijitDisabled");
+    }
+
+    function absenceLabel(value) { return clean(value).normalize("NFC").toLowerCase(); }
+
+    function absenceTime(value) {
+        const time = clean(value);
+        return /^\d:\d{2}$/.test(time) ? "0" + time : time;
+    }
+
+    function absenceEditorState() {
+        if (editor?.id !== request.editorId) return {};
+        if (!documents.includes(editor.doc))
+            return editor.dialog ? { absenceEditorClosed: true, saveRequested: editor.saveRequested } : {};
+        const { doc, excuse, row } = editor;
+        const id = excuse ? "excuseForm" : "absenceForm";
+        const form = doc.getElementById(id);
+        const current = form?.closest('[role="dialog"]');
+        if (!visible(current)) return editor.dialog ? { absenceEditorClosed: true, saveRequested: editor.saveRequested } : {};
+        if (editor.dialog) return { absenceEditorVisible: true, saveRequested: editor.saveRequested };
+        if (excuse) {
+            const title = absenceLabel(current.querySelector(".dijitDialogTitle")?.textContent);
+            if (title !== absenceLabel("Entschuldigung für " + editor.person))
+                return { error: "WebUntis hat die Person im Entschuldigungsdialog nicht bestätigt." };
+        } else {
+            const value = name => doc.getElementById("absenceForm.id" + name)?.value;
+            if (absenceLabel(value("person")) !== absenceLabel(editor.person) ||
+                asIso(value("startDate")) !== row.from || asIso(value("endDate")) !== row.to ||
+                (row.start && absenceTime(value("startTime")) !== row.start) ||
+                (row.end && absenceTime(value("endTime")) !== row.end))
+                return { error: "WebUntis hat Person oder Zeitraum im Abwesenheitsdialog nicht bestätigt." };
+        }
+        editor.dialog = current;
+        const frame = frames.find(item => item.contentDocument === doc);
+        if (frame) setStyle(frame, {
+            position: "fixed", inset: "0", border: "0", width: "100vw", height: "100vh",
+            "max-width": "none", "max-height": "none", "z-index": "2147483647"
+        });
+        const list = doc.getElementById("absencelist");
+        if (list && !list.contains(current)) setStyle(list, { visibility: "hidden" });
+        return { absenceEditorVisible: true };
+
+        function setStyle(element, properties) {
+            for (const [name, value] of Object.entries(properties)) element.style.setProperty(name, value, "important");
+        }
+    }
+    const dateMatches = dateInputs.map(matchesDate);
     if (configuringRange) {
         if (!state.hasDateInputs || request.waitForFormStamp === formStamp) return state;
         return dateMatches.every(Boolean) ? { ...state, rangeReady: true } : { ...state, changedField: changeDate() };

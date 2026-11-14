@@ -110,6 +110,7 @@ public sealed record Alert(string StudentId, string Name, string Label, string D
 public sealed class AttendanceMatrix
 {
     public string ClassName { get; }
+    public string ClassId { get; }
     public DateOnly From { get; }
     public DateOnly To { get; }
     public Student[] Students { get; }
@@ -124,9 +125,10 @@ public sealed class AttendanceMatrix
 
     public AttendanceMatrix(string className, DateOnly from, DateOnly to,
         IEnumerable<Student> roster, IEnumerable<Report> sources, bool isDemo = false, IEnumerable<AbsenceNote>? absenceNotes = null,
-        IReadOnlyList<SchoolPeriod>? schoolPeriods = null)
+        IReadOnlyList<SchoolPeriod>? schoolPeriods = null, string classId = "")
     {
         ClassName = className;
+        ClassId = classId;
         From = from;
         To = to;
         IsDemo = isDemo;

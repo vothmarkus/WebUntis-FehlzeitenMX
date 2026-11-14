@@ -30,7 +30,9 @@ internal sealed class MatrixView : UserControl
     private DateOnly[] days = [];
     private bool scrollPending;
 
+    public AttendanceMatrix? CurrentMatrix => matrix;
     public event Action<MatrixView, DayDetails>? DaySelected;
+    public event Action<MatrixView, AttendanceMatrix, Student, DateOnly, Point>? AbsenceMenuRequested;
 
     public MatrixView(bool stacked, bool throughToday = false)
     {
@@ -60,6 +62,18 @@ internal sealed class MatrixView : UserControl
         };
         grid.CurrentCellChanged += (_, _) => SelectDay();
         grid.CellClick += (_, _) => SelectDay();
+        grid.CellMouseUp += (_, args) =>
+        {
+            if (args.Button == MouseButtons.Right) RequestAbsenceMenu(args.ColumnIndex, args.RowIndex, Cursor.Position);
+        };
+        grid.KeyDown += (_, args) =>
+        {
+            if (grid.CurrentCell is not { } current ||
+                (args.KeyData != Keys.Apps && args.KeyData != (Keys.Shift | Keys.F10))) return;
+            var bounds = grid.GetCellDisplayRectangle(current.ColumnIndex, current.RowIndex, cutOverflow: true);
+            args.SuppressKeyPress = RequestAbsenceMenu(current.ColumnIndex, current.RowIndex,
+                grid.PointToScreen(new Point(bounds.Left, bounds.Bottom)));
+        };
         grid.VisibleChanged += (_, _) => ScrollToLatest();
         grid.HandleCreated += (_, _) => ScrollToLatest();
         Controls.Add(grid);
@@ -77,8 +91,13 @@ internal sealed class MatrixView : UserControl
         if (stacked) Height = caption.Height;
     }
 
-    public void SetMatrix(AttendanceMatrix value)
+    public void SetMatrix(AttendanceMatrix value, bool keepPosition = false)
     {
+        var offset = keepPosition ? grid.HorizontalScrollingOffset : 0;
+        var current = keepPosition ? grid.CurrentCell : null;
+        var previousStudent = current != null && matrix != null ? matrix.Students[current.RowIndex].Id : null;
+        var previousDay = current != null && current.ColumnIndex > 0 ? days[current.ColumnIndex - 1] : (DateOnly?)null;
+        var previousRow = keepPosition ? grid.FirstDisplayedScrollingRowIndex : -1;
         matrix = value;
         var today = DateOnly.FromDateTime(DateTime.Today);
         days = throughToday && value.From <= today ? value.Days.Where(day => day <= today).ToArray() : value.Days;
@@ -110,7 +129,17 @@ internal sealed class MatrixView : UserControl
             Height = caption.Height + grid.ColumnHeadersHeight + grid.Rows.GetRowsHeight(DataGridViewElementStates.Visible) +
                 SystemInformation.HorizontalScrollBarHeight + 3;
         }
-        scrollPending = throughToday && value.From <= today;
+        scrollPending = !keepPosition && throughToday && value.From <= today;
+        if (keepPosition)
+        {
+            var row = Array.FindIndex(value.Students, student => student.Id == previousStudent);
+            var column = previousDay.HasValue ? Array.IndexOf(days, previousDay.Value) + 1 : 0;
+            if (row >= 0 && column > 0) grid.CurrentCell = grid[column, row];
+            var width = grid.Columns.GetColumnsWidth(DataGridViewElementStates.Visible);
+            grid.HorizontalScrollingOffset = Math.Min(offset, Math.Max(0, width - grid.ClientSize.Width + 2));
+            if (!stacked && previousRow >= 0 && previousRow < grid.RowCount)
+                grid.FirstDisplayedScrollingRowIndex = previousRow;
+        }
         ScrollToLatest();
     }
 
@@ -139,6 +168,17 @@ internal sealed class MatrixView : UserControl
     {
         if (grid.CurrentCell is { } current && CellAt(current.ColumnIndex, current.RowIndex) is { } cell)
             DaySelected?.Invoke(this, DayDetails.Create(matrix!.Students[current.RowIndex], days[current.ColumnIndex - 1], cell, matrix.SchoolPeriods));
+    }
+
+    private bool RequestAbsenceMenu(int column, int row, Point position)
+    {
+        if (AbsenceMenuRequested is not { } openMenu || matrix is not { IsDemo: false, ClassId.Length: > 0 } value ||
+            CellAt(column, row) is not { } cell || !cell.Entries.Any(entry => entry.Kind is EntryKind.Absent or EntryKind.Late))
+            return false;
+        grid.CurrentCell = grid[column, row];
+        SelectDay();
+        openMenu(this, value, value.Students[row], days[column - 1], position);
+        return true;
     }
 
     private static (Color Background, Color Foreground) MarkColors(DayMark mark) => mark switch

@@ -1,5 +1,5 @@
 WebUntis-FehlzeitenMX
-Windows x64 · Version 2.7
+Windows x64 · Version 2.8
 
 INSTALLIEREN UND AKTUALISIEREN
 1. Das Setup ausführen. Es schließt die bisherige App beim Installieren.
@@ -52,6 +52,15 @@ Zelle, etwa «1 Schulstunde (45′)». Spaltenbreiten lassen sich
 am Rand der Spaltenüberschrift ziehen. Der Text bricht um, wenn
 die Spalte zu schmal ist. Bei Bedarf ergänzt die App Uhrzeiten,
 Entschuldigungsstatus und Freitexte aus dem Klassenbuch.
+
+ABWESENHEITEN AUF DER STARTSEITE BEARBEITEN
+Rechtsklick auf eine Fehlzeit oder Verspätung in der Startseite.
+Der Klick auf den passenden Zeitraum öffnet den Stift-Dialog
+von WebUntis. Der zusätzliche Menüpunkt «Entschuldigung»
+öffnet den Statusdialog. WebUntis entscheidet anhand deiner
+Berechtigungen, welche Aktionen verfügbar sind.
+Mit «Speichern» im WebUntis-Dialog übernimmst du deine Änderungen.
+Danach lädt die App die betroffene Klasse erneut.
 
 • anwesend oder kein Fehlzeiteintrag, │ Fehlzeit, E entschuldigte
 Fehlzeit, + verspätet, │+ oder E+ Fehlzeit und Verspätung,

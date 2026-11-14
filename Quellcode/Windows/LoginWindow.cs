@@ -58,6 +58,24 @@ internal sealed class LoginWindow : Form
         Activate();
     }
 
+    public DialogResult ShowForAbsence(Form owner, string title, Action shown)
+    {
+        Text = title;
+        ClientSize = LogicalToDeviceUnits(new Size(585, 710));
+        var area = Screen.FromControl(owner).WorkingArea;
+        var width = Math.Min(Width, area.Width);
+        var height = Math.Min(Height, area.Height);
+        MinimumSize = new Size(Math.Min(460, width), Math.Min(440, height));
+        Bounds = new Rectangle(area.X + (area.Width - width) / 2, area.Y + (area.Height - height) / 2, width, height);
+        FitBrowser();
+        EventHandler onShown = (_, _) => shown();
+        Shown += onShown;
+        try { return ShowDialog(owner); }
+        finally { Shown -= onShown; }
+    }
+
+    public void FocusBrowser() => controller?.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
+
     public void ShowAddress(string? value)
     {
         if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
@@ -67,7 +85,7 @@ internal sealed class LoginWindow : Form
     protected override void OnFormClosing(FormClosingEventArgs args)
     {
         base.OnFormClosing(args);
-        if (args.CloseReason != CloseReason.UserClosing) return;
+        if (Modal || args.CloseReason != CloseReason.UserClosing) return;
         args.Cancel = true;
         Hide();
         Canceled?.Invoke();
