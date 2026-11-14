@@ -543,40 +543,62 @@ function reportCommand(request) {
         const page = doc.defaultView;
         const frame = page.frameElement;
 
-        // Recover the form's natural size before shrinking the WebView. Dijit otherwise limits
-        // the popup to a fraction of the viewport a second time when the host is resized.
-        setStyle(current, {
-            position: "fixed", top: "0", left: "0", width: "max-content", height: "auto",
-            "min-width": "0", "min-height": "0", "max-width": "none", "max-height": "none",
-            margin: "0", "box-sizing": "border-box", "box-shadow": "none"
-        });
-        for (const part of [pane, current.querySelector(".dijitDialogTitleBar"), current.querySelector(".dijitDialogPaneActionBar")]) {
-            if (part) setStyle(part, { position: "relative", inset: "auto", width: "auto", height: "auto",
-                "max-width": "none", "max-height": "none", overflow: "visible" });
-        }
-        const content = current.getBoundingClientRect();
-        if (content.width <= 0 || content.height <= 0) return {};
-        const edge = Math.max(2, Math.ceil(content.width) - current.clientWidth);
-        editor.width = Math.max(Math.ceil(content.width), current.scrollWidth + edge);
-        setStyle(current, { width: editor.width + "px" });
-        const fitted = current.getBoundingClientRect();
-        editor.height = Math.max(Math.ceil(fitted.height), current.scrollHeight + 2);
-        editor.dialog = current;
-
-        if (frame) setStyle(frame, {
-            position: "fixed", inset: "0", border: "0", width: "100vw", height: "100vh",
-            "max-width": "none", "max-height": "none", "z-index": "2147483647"
-        });
-        // Hide the class register and its underlay. Keep sibling dropdowns and validation messages.
+        // Dijit rewrites inline dimensions and offsets whenever the WebView is resized.
+        // Anchor the dialog and keep its content at its natural size after those changes.
+        current.setAttribute("data-fehlzeiten-mx-excuse", "");
+        const layout = addLayout(doc, `
+            html { background: white !important; overflow: auto !important; }
+            body { margin: 0 !important; min-width: 0 !important; min-height: 0 !important; }
+            [data-fehlzeiten-mx-excuse-background] { display: none !important; }
+            [data-fehlzeiten-mx-excuse] {
+                position: absolute !important; inset: 0 auto auto 0 !important;
+                width: max-content !important; height: auto !important;
+                min-width: 0 !important; min-height: 0 !important;
+                max-width: none !important; max-height: none !important;
+                margin: 0 !important; box-sizing: border-box !important;
+                overflow: visible !important; box-shadow: none !important;
+            }
+            [data-fehlzeiten-mx-excuse] > :is(.dijitDialogPaneContent, .dijitDialogTitleBar, .dijitDialogPaneActionBar) {
+                position: relative !important; inset: auto !important;
+                width: auto !important; height: auto !important;
+                min-width: 0 !important; min-height: 0 !important;
+                max-width: none !important; max-height: none !important; overflow: visible !important;
+            }
+        `);
         const background = doc.getElementById("app") ?? doc.getElementById("absencelist");
         for (const layer of [background, ...doc.querySelectorAll(".dijitDialogUnderlayWrapper")]) {
             if (!layer || layer.contains(current)) continue;
             layer.inert = true;
-            setStyle(layer, { visibility: "hidden" });
+            layer.setAttribute("data-fehlzeiten-mx-excuse-background", "");
         }
-        setStyle(doc.documentElement, { background: "white", overflow: "hidden" });
-        setStyle(doc.body, { margin: "0", background: "white", overflow: "hidden" });
-        setStyle(current, { width: "100%", height: "auto", "max-height": "100%", overflow: "auto" });
+
+        const content = current.getBoundingClientRect();
+        if (content.width <= 0 || content.height <= 0)
+            return { error: "Die Größe des WebUntis-Entschuldigungsformulars konnte nicht bestimmt werden." };
+        const edge = Math.max(2, Math.ceil(content.width) - current.clientWidth);
+        const width = Math.max(Math.ceil(content.width), current.scrollWidth + edge);
+        layout.insertRule(`[data-fehlzeiten-mx-excuse] { width: ${width}px !important; }`, layout.cssRules.length);
+        const fitted = current.getBoundingClientRect();
+        const bottomEdge = Math.max(2, Math.ceil(fitted.height) - current.clientHeight);
+        // Leave room for rounding from CSS pixels to Windows device pixels.
+        editor.width = width + 2;
+        editor.height = Math.max(Math.ceil(fitted.height), current.scrollHeight + bottomEdge) + 2;
+        editor.dialog = current;
+
+        if (frame) {
+            frame.setAttribute("data-fehlzeiten-mx-excuse", "");
+            addLayout(frame.ownerDocument, `
+                [data-fehlzeiten-mx-excuse] {
+                    position: fixed !important; inset: 0 !important;
+                    width: 100vw !important; height: 100vh !important;
+                    min-width: 0 !important; min-height: 0 !important;
+                    max-width: none !important; max-height: none !important;
+                    margin: 0 !important; padding: 0 !important; border: 0 !important;
+                    box-sizing: border-box !important; z-index: 2147483647 !important;
+                }
+            `);
+        }
+        page.scrollTo(0, 0);
 
         doc.addEventListener("click", onButton, true);
         form.addEventListener("submit", onSave);
@@ -615,8 +637,11 @@ function reportCommand(request) {
             globalThis.chrome?.webview?.postMessage({ editorId: editor.id, action, saveRequested: editor.saveRequested });
         }
 
-        function setStyle(element, properties) {
-            for (const [name, value] of Object.entries(properties)) element.style.setProperty(name, value, "important");
+        function addLayout(ownerDocument, rules) {
+            const sheet = new ownerDocument.defaultView.CSSStyleSheet();
+            sheet.replaceSync(rules);
+            ownerDocument.adoptedStyleSheets = [...ownerDocument.adoptedStyleSheets, sheet];
+            return sheet;
         }
     }
     const dateMatches = dateInputs.map(matchesDate);
