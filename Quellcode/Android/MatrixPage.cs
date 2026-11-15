@@ -9,7 +9,6 @@ internal sealed class MatrixPage : ContentPage
 {
     private enum Section { Classes, Matrix }
 
-    private const string LegendText = "• Kein Fehlzeiteintrag\n| Fehlzeit    E Entschuldigt\n+ Verspätet    |+ / E+ Beides\n? Ungeklärt    B Befreit";
     private const string ChooseClass = "Wähle eine Klasse.";
     private const string InitialUpdate = "Für diese Klasse liegt noch kein Datenstand vor.";
     private const string HeadingAnimation = "SlideHeading";
@@ -365,7 +364,7 @@ internal sealed class MatrixPage : ContentPage
     private async Task ShowMenuAsync()
     {
         if (ControlsLocked || menuOpen || modalOpen) return;
-        string[] actions = ["▤  Meine Klassen", "▦  Tagesmatrix", "☷  Klassen auswählen", "ⓘ  Legende", "⚙  WebUntis-Konto"];
+        string[] actions = ["▤  Meine Klassen", "▦  Tagesmatrix", "⚙  Einstellungen"];
         menuOpen = true;
         int action;
         try { action = await ChooseAsync("Fehlzeiten MX", actions); }
@@ -376,13 +375,17 @@ internal sealed class MatrixPage : ContentPage
         {
             case 0: await OpenSectionAsync(Section.Classes); break;
             case 1: await OpenSectionAsync(Section.Matrix); break;
-            case 2:
-                if (classes.Length == 0) await LoadClassesAsync(refreshView: false);
-                await ShowClassSettingsAsync();
-                break;
-            case 3: await NoticeAsync("Legende", LegendText); break;
-            case 4: await ShowAccountAsync(); break;
+            case 2: await ShowSettingsAsync(); break;
         }
+    }
+
+    private Task ShowSettingsAsync() => ShowModalAsync(new SettingsPage(sessionReady, classes.Length > 0,
+        () => LoadClassesAsync(), SignOutAsync, ChooseClassesFromSettingsAsync));
+
+    private async Task ChooseClassesFromSettingsAsync()
+    {
+        if (classes.Length == 0) await LoadClassesAsync(refreshView: false);
+        await ShowClassSettingsAsync();
     }
 
     private async Task OpenSectionAsync(Section next)
@@ -884,39 +887,23 @@ internal sealed class MatrixPage : ContentPage
             ? uri.GetLeftPart(UriPartial.Authority) : WebUntisReports.Origin;
     }
 
-    private async Task ShowAccountAsync()
+    private async Task SignOutAsync()
     {
-        if (classes.Length == 0)
+        await RunAsync(async (service, _, _) =>
         {
-            await LoadClassesAsync();
-            return;
-        }
-        var connect = sessionReady ? "Klassenliste aktualisieren" : "Bei WebUntis anmelden";
-        menuOpen = true;
-        int action;
-        try { action = await ChooseAsync("WebUntis-Konto", [connect, "Abmelden"]); }
-        finally { menuOpen = false; }
-
-        if (locked) return;
-        if (action == 0) await LoadClassesAsync();
-        else if (action == 1)
-        {
-            await RunAsync(async (service, _, _) =>
-            {
-                sessionReady = false;
-                signInRequired = false;
-                signInDismissed = true;
-                schoolYear = selectedRange = null;
-                classes = [];
-                FillClassPicker();
-                RebuildDeck();
-                UpdateControls();
-                var erased = await TryCacheAsync(cache.ClearAsync);
-                await service.SignOutAsync();
-                status.Text = erased ? "Von WebUntis abgemeldet"
-                    : "Abgemeldet · lokaler Datenspeicher konnte nicht vollständig gelöscht werden";
-            });
-        }
+            sessionReady = false;
+            signInRequired = false;
+            signInDismissed = true;
+            schoolYear = selectedRange = null;
+            classes = [];
+            FillClassPicker();
+            RebuildDeck();
+            UpdateControls();
+            var erased = await TryCacheAsync(cache.ClearAsync);
+            await service.SignOutAsync();
+            status.Text = erased ? "Von WebUntis abgemeldet"
+                : "Abgemeldet · lokaler Datenspeicher konnte nicht vollständig gelöscht werden";
+        });
     }
 
     private MatrixCard CreateDeckCard() => CreateMatrixCard(inDeck: true);

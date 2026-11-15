@@ -22,17 +22,19 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.6.4
+## Android-Testversion 0.6.5
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-Installiere 0.6.4 als Update über 0.6.3, 0.6.2, 0.6.1, 0.6.0, 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
+Installiere 0.6.5 als Update über 0.6.4, 0.6.3, 0.6.2, 0.6.1, 0.6.0, 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
+
+Unter **⋮ → Einstellungen** findest du **Anmeldung**, **Klassenauswahl**, **Legende**, **App-Update** und **Impressum**. **App-Update** sucht beim Öffnen der Einstellungen nach Android-Releases auf GitHub. Wenn eine neuere ARM64-Version verfügbar ist, lädt die App die APK auf Wunsch, prüft sie und öffnet die Android-Installation. Bestätige dort das Update. Android kann beim ersten In-App-Update nach der Installationsfreigabe für Fehlzeiten MX fragen.
 
 Beim Start und beim Zurückkehren in die App entsperrst du sie über die Android-Abfrage mit Biometrie oder deiner Displaysperre.
 
 **Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Die App behält ihr WebUntis-Profil bei App-Sperre und Updates. Fehlende Sitzungscookies ergänzt sie aus der verschlüsselten Sicherung. Verlangt WebUntis eine neue Anmeldung, öffnet sich die Login-Seite aus der Matrix. Bei Bedarf kannst du über **Anmelden** in der Statuszeile erneut starten.
 
-Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Frühere Auswahlen für Startseite und Meine Klassen werden zusammengeführt. Unter **⋮ → Klassen auswählen** stehen **Meine Klassen** und **Klassenlehrer** nebeneinander. Setzt du **Klassenlehrer**, ist die Klasse automatisch ausgewählt und steht vor den anderen Klassen. Wische über den Klassennamen oder verwende die Pfeile zum Wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste.
+Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Frühere Auswahlen für Startseite und Meine Klassen werden zusammengeführt. In der **Klassenauswahl** stehen **Meine Klassen** und **Klassenlehrer** nebeneinander. Setzt du **Klassenlehrer**, ist die Klasse automatisch ausgewählt und steht vor den anderen Klassen. Wische über den Klassennamen oder verwende die Pfeile zum Wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste.
 
 Die Matrizen öffnen sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und vertikal für weitere Namen. Die Namensspalte und die Datumszeile bleiben sichtbar. Beim Scrollen zu weiteren Namen schiebt sich die App-Überschrift mit Logo und Menü nach oben. Beim Zurückscrollen fährt sie wieder ein.
 
@@ -42,7 +44,7 @@ Tippe für die Tagesdetails auf eine Zelle. Zoome mit zwei Fingern. In einer als
 
 Vollständige Matrizen der gewählten Klassen und die Klassenliste werden mit AES-256-GCM verschlüsselt auf dem Gerät gespeichert. Der Schlüssel liegt im Android Keystore. Beim Öffnen sind die gespeicherten Matrizen auch offline mit Datum und Uhrzeit des Abrufs verfügbar. In einer aktiven WebUntis-Sitzung aktualisiert die geöffnete Stapelansicht ihre Klassen alle fünf Minuten im Hintergrund. Über **↻** kannst du sofort aktualisieren und dich bei Bedarf erneut anmelden. Ein unvollständiger Abruf lässt den letzten vollständigen Stand bestehen.
 
-**Abmelden** unter **WebUntis-Konto** löscht die lokal gespeicherte Sitzung, die Matrizen und die Klassenliste. Entschuldigungen sind in den Tagesdetails lesbar.
+**Abmelden** unter **Einstellungen → Anmeldung** löscht die lokal gespeicherte Sitzung, die Matrizen und die Klassenliste. Entschuldigungen sind in den Tagesdetails lesbar.
 
 ### APK bauen
 
@@ -54,6 +56,8 @@ dotnet build Quellcode/Android/WebUntisFehlzeitenMX.Android.csproj -c Release
 ```
 
 Die mit dem lokalen Testschlüssel signierte APK liegt anschließend unter `Quellcode/Android/bin/Release/net10.0-android/android-arm64/`. Für die Weitergabe von Updates müssen alle APKs mit demselben Schlüssel signiert sein.
+
+Android-Updates werden als GitHub-Prerelease mit einem Tag wie `android-v0.6.5` und der signierten Datei `WebUntis-FehlzeitenMX-Android-0.6.5-arm64.apk` veröffentlicht. Setze den Tag auf den Commit, zu dem die APK gebaut wurde, und erhöhe bei jedem Update `ApplicationVersion` und `ApplicationDisplayVersion`. Windows verwendet weiterhin die stabilen Releases mit `v…`-Tag.
 
 Die gemeinsame CSV-Auswertung lässt sich mit fiktiven Berichten prüfen:
 

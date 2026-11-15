@@ -687,7 +687,8 @@ function reportCommand(request) {
             width: "100%", height: "100%", overflow: "auto" });
         const partStyle = { ...naturalSize, position: "relative", inset: "auto" };
         const content = mobile ? [...current.children] : [];
-        let fittedWidth = 0;
+        const fieldSelector = 'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]),' +
+            'select,textarea,[role="combobox"],.dijitTextBox,.dijitSelect';
         if (mobile) {
             fitMobileViewport(current);
             if (frame) fitMobileViewport(frame);
@@ -753,6 +754,7 @@ function reportCommand(request) {
         });
         resizeObserver.observe(current);
         resizeObserver.observe(form);
+        if (mobile) for (const field of form.querySelectorAll(fieldSelector)) resizeObserver.observe(field);
         page.addEventListener("pagehide", () => notify("closed"), { once: true });
         document.defaultView.addEventListener("pagehide", () => notify("closed"), { once: true });
         return { absenceEditorVisible: true, editorWidth: editor.width, editorHeight: editor.height };
@@ -764,19 +766,26 @@ function reportCommand(request) {
 
         function fitFormWidth() {
             const width = current.clientWidth;
-            if (width <= 0 || width === fittedWidth) return;
-            fittedWidth = width;
-            // Resize the contents inside the fixed scroll area. Pinch zoom is independent of this layout width.
+            if (width <= 0) return;
+            const fields = [...form.querySelectorAll(fieldSelector)].filter(visible);
+            if (fields.length === 0) return;
+            const { scrollLeft, scrollTop } = current;
             for (const part of content) setLayout(part, { zoom: "1" });
-            const left = current.getBoundingClientRect().left + current.clientLeft - current.scrollLeft;
-            let extent = current.scrollWidth > width + 1 ? current.scrollWidth : 0;
-            for (const item of current.querySelectorAll('input:not([type="hidden"]),select,textarea,button,' +
-                '[role="combobox"],[role="button"],.dijitDialogTitle,.dijitTextBox,.dijitSelect')) {
-                if (visible(item)) extent = Math.max(extent, item.getBoundingClientRect().right - left);
+            const origin = current.getBoundingClientRect().left + current.clientLeft - current.scrollLeft;
+            let left = Infinity;
+            let right = 0;
+            for (const field of fields) {
+                const bounds = field.getBoundingClientRect();
+                if (bounds.width <= 0 || bounds.height <= 0) continue;
+                left = Math.min(left, bounds.left - origin);
+                right = Math.max(right, bounds.right - origin);
             }
-            if (extent <= 0) return;
-            const scale = Math.max(0.65, Math.min(1.35, (width - 16) / extent)).toFixed(3);
+            // Mirror the form's left inset at its rightmost field. The title and pane can be wider.
+            if (!Number.isFinite(left) || right <= left || right <= 0) return;
+            const scale = (width / (right + Math.max(0, left))).toFixed(4);
             for (const part of content) setLayout(part, { zoom: scale });
+            current.scrollLeft = scrollLeft;
+            current.scrollTop = scrollTop;
         }
 
         function fitMobileViewport(surface) {
