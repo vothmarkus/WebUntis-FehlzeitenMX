@@ -7,7 +7,7 @@ namespace WebUntisAuswertung.Mobile;
 internal sealed class MatrixCard : ContentView
 {
     private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
-    private readonly MatrixCanvas canvas = new();
+    private readonly MatrixCanvas canvas;
     private readonly bool inDeck;
     private readonly Grid header;
     private readonly Label title = MobileStyle.Label("", 16, bold: true);
@@ -28,11 +28,14 @@ internal sealed class MatrixCard : ContentView
     public event Action<AttendanceMatrix>? NotesRequested;
     public event Action<float, bool>? VerticalScrolled;
     public event Action<int>? AdjacentRequested;
+    public event Action<float>? CardDragged;
+    public event Action<int?>? CardDragEnded;
     public event Action? ClassPickerRequested;
 
     public MatrixCard(bool inDeck = false)
     {
         this.inDeck = inDeck;
+        canvas = new MatrixCanvas(inDeck);
         canvas.DaySelected += (student, day, cell) =>
         {
             if (Matrix is { } current) DaySelected?.Invoke(current, student, day, cell);
@@ -42,6 +45,8 @@ internal sealed class MatrixCard : ContentView
             if (Matrix is { } current) AbsenceRequested?.Invoke(current, student, day, cell);
         };
         canvas.VerticalScrolled += (distance, atTop) => VerticalScrolled?.Invoke(distance, atTop);
+        canvas.CardDragged += distance => CardDragged?.Invoke(distance);
+        canvas.CardDragEnded += direction => CardDragEnded?.Invoke(direction);
 
         title.LineBreakMode = caption.LineBreakMode = dataStand.LineBreakMode = LineBreakMode.TailTruncation;
         title.MaxLines = caption.MaxLines = dataStand.MaxLines = 1;

@@ -7,23 +7,26 @@ namespace WebUntisAuswertung.Mobile;
 internal sealed class MatrixCanvas : GraphicsView, IDrawable
 {
     private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
+    private readonly bool inDeck;
     private float zoom = 1;
     private float width, height, horizontal, vertical, startX, startY, panX, panY;
     private AttendanceMatrix? matrix;
     private bool atNewest;
     private bool pinching;
     private bool held;
+    private bool belowRows;
     private (string Id, DateOnly Day)? selected;
 
-    public MatrixCanvas()
+    public MatrixCanvas(bool inDeck)
     {
+        this.inDeck = inDeck;
         Drawable = this;
         BackgroundColor = Colors.White;
         SemanticProperties.SetDescription(this, "Tagesmatrix. Tippe für Tagesdetails oder halte ein Feld für Entschuldigungen gedrückt.");
         var pan = new PanGestureRecognizer { TouchPoints = 1 };
         pan.PanUpdated += (_, args) =>
         {
-            if (pinching) return;
+            if (pinching || belowRows) return;
             switch (args.StatusType)
             {
                 case GestureStatus.Started:
@@ -52,7 +55,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         var tap = new TapGestureRecognizer();
         tap.Tapped += (_, args) =>
         {
-            if (!pinching && !held && args.GetPosition(this) is { } position) Select(position);
+            if (!pinching && !held && !belowRows && args.GetPosition(this) is { } position) Select(position);
         };
         var pinch = new PinchGestureRecognizer();
         pinch.PinchUpdated += (_, args) =>
@@ -79,13 +82,23 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     public event Action<Student, DateOnly, DayCell>? DaySelected;
     public event Action<Student, DateOnly, DayCell>? AbsenceRequested;
     public event Action<float, bool>? VerticalScrolled;
+    public event Action<float>? CardDragged;
+    public event Action<int?>? CardDragEnded;
     internal AttendanceMatrix? CurrentMatrix => matrix;
 
-    internal void BeginPress() => held = false;
+    internal bool BeginPress(Point position)
+    {
+        held = false;
+        belowRows = inDeck && matrix is { } value && position.Y >= Heading + value.Students.Length * Row - vertical;
+        return belowRows;
+    }
+
+    internal void DragCard(float distance) => CardDragged?.Invoke(distance);
+    internal void EndCardDrag(int? direction) => CardDragEnded?.Invoke(direction);
 
     internal void Hold(Point position, AttendanceMatrix original)
     {
-        if (ReferenceEquals(matrix, original) && !pinching) Select(position, longPress: true);
+        if (ReferenceEquals(matrix, original) && !pinching && !belowRows) Select(position, longPress: true);
     }
     private float Heading => Math.Min(50 * zoom, Math.Max(24, height - 24));
     private float Row => 40 * zoom;
