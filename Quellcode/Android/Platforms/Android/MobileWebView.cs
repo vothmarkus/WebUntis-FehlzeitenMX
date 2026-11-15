@@ -115,11 +115,11 @@ internal sealed class MobileWebView : IDisposable
         {
             // Wait through the first layout pass after the editor toolbar has resized the WebView.
             var layout = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            reports.PostOnAnimation(() =>
+            reports.PostOnAnimation(new Java.Lang.Runnable(() =>
             {
-                if (CanFit()) reports.PostOnAnimation(() => layout.TrySetResult());
+                if (CanFit()) reports.PostOnAnimation(new Java.Lang.Runnable(() => layout.TrySetResult()));
                 else layout.TrySetResult();
-            });
+            }));
             await Task.WhenAny(layout.Task, Task.Delay(120, startupToken));
 
             // WebView can apply the new viewport scale after the first layout. Recheck during opening only.
