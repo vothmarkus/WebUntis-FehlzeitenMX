@@ -127,7 +127,7 @@ internal sealed class MobileWebView : IDisposable
         var manager = CookieManager.Instance;
         if (manager == null || !WebViewFeature.IsFeatureSupported(WebViewFeature.GetCookieInfo)) return [];
         const string root = WebUntisReports.Origin;
-        string[] pages = [root + "/", root + "/WebUntis/", root + "/WebUntis/embedded.do",
+        string[] pages = [root + "/", root + "/WebUntis/", root + "/WebUntis/embedded.do", root + "/WebUntis/reports.do",
             WebUntisReports.Address, WebUntisReports.Absences, WebUntisReports.AbsenceTimes, WebUntisReports.Timetable];
         var cookies = new Dictionary<(string, string, string), SavedWebUntisCookie>();
         var now = DateTimeOffset.UtcNow;

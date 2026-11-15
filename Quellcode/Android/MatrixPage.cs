@@ -661,6 +661,7 @@ internal sealed class MatrixPage : ContentPage
                 if (savedSession != null && !await MobileWebView.RestoreSessionAsync(savedSession, cancellation.Token))
                 {
                     await TryCacheAsync(cache.ForgetSessionAsync);
+                    status.Text = "Die gespeicherte WebUntis-Sitzung ist abgelaufen. Melde dich erneut an.";
                     return false;
                 }
                 profileReady = true;

@@ -67,6 +67,7 @@ internal sealed class MobileApp : Application
             try
             {
                 await sealing;
+                await Task.Yield();
                 if (!active) return;
                 open = await gate.AuthenticateAsync();
                 if (open && active) Enter();
