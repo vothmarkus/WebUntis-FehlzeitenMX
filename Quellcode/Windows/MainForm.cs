@@ -771,8 +771,8 @@ internal sealed class MainForm : Form
         CancellationToken token, Action<int, int>? reportProgress = null, bool refreshFromWeb = false)
     {
         if (!refreshFromWeb && schoolYearMatrices.TryGetValue(name, out var cached)) return cached;
-        var result = await ReadMatrixAsync(name, ThroughToday(range), progress, token, reportProgress, storageSchoolYear: range);
-        if (result.HasAbsenceReport && result.HasLatenessReport && result.HasTimetable) schoolYearMatrices[name] = result;
+        var result = await ReadMatrixAsync(name, range.ThroughToday(), progress, token, reportProgress, storageSchoolYear: range);
+        if (result.HasCompleteReports) schoolYearMatrices[name] = result;
         return result;
     }
 
@@ -804,13 +804,10 @@ internal sealed class MainForm : Form
 
     private static AttendanceMatrix RequireCompleteIfKeeping(AttendanceMatrix matrix, MatrixView view)
     {
-        if (!IsComplete(matrix) && view.CurrentMatrix is { } previous && IsComplete(previous))
+        if (!matrix.HasCompleteReports && view.CurrentMatrix is { HasCompleteReports: true })
             throw new InvalidDataException("WebUntis hat keinen vollständigen neuen Datenstand geliefert. Der letzte vollständige Stand bleibt sichtbar.");
         return matrix;
     }
-
-    private static bool IsComplete(AttendanceMatrix matrix) =>
-        matrix.HasAbsenceReport && matrix.HasLatenessReport && matrix.HasTimetable;
 
     private void RefreshVisibleInBackground()
     {
@@ -861,12 +858,6 @@ internal sealed class MainForm : Form
         }
     }
 
-    private static ReportRange ThroughToday(ReportRange range)
-    {
-        var today = DateOnly.FromDateTime(DateTime.Today);
-        return range.Contains(today) ? range with { To = today } : range;
-    }
-
     private async Task OpenRequestedMatrixAsync()
     {
         if (running != null && !backgroundRefresh) return;
@@ -898,7 +889,7 @@ internal sealed class MainForm : Form
                 matrixDetails.ShowDetails(matrixView.SetMatrix(stored, fromDevice: true));
             else if (matrixView.CurrentMatrix == null)
             {
-                var exact = range == schoolYear ? ThroughToday(range) : range;
+                var exact = range == schoolYear ? range.ThroughToday() : range;
                 if (schoolYearMatrices.TryGetValue(name, out var current) && exact == new ReportRange(current.From, current.To))
                     matrixDetails.ShowDetails(matrixView.SetMatrix(current));
             }
@@ -925,7 +916,7 @@ internal sealed class MainForm : Form
         var range = new ReportRange(result.From, result.To);
         if (isSchoolYear)
         {
-            if (IsComplete(result)) schoolYearMatrices[name] = result;
+            if (result.HasCompleteReports) schoolYearMatrices[name] = result;
             if (homeViews.TryGetValue(name, out var home) && CanReplace(home))
                 ApplyHomeMatrix(home, result);
             if (ClassComparer.Equals(openedMyClass, name) && CanReplace(myClassView))
@@ -935,7 +926,7 @@ internal sealed class MainForm : Form
             CanReplace(matrixView))
             matrixDetails.ShowDetails(matrixView.SetMatrix(result, keepPosition: matrixView.CurrentMatrix != null));
 
-        bool CanReplace(MatrixView target) => allowPartial || IsComplete(result) || target.CurrentMatrix is not { } old || !IsComplete(old);
+        bool CanReplace(MatrixView target) => allowPartial || result.HasCompleteReports || target.CurrentMatrix is not { HasCompleteReports: true };
     }
 
     private async Task<AttendanceMatrix> ReadMatrixAsync(string name, ReportRange range, IProgress<string> progress,
@@ -946,7 +937,7 @@ internal sealed class MainForm : Form
         Action<int>? reportCompleted = reportProgress == null ? null : count => reportProgress(count, steps);
         var batch = await browser.FetchAsync(name, range.From, range.To, progress, token, reportCompleted);
         token.ThrowIfCancellationRequested();
-        var homeClass = homeViews.ContainsKey(name) && (afterExcuse || schoolYear == range || ThroughToday(schoolYear) == range);
+        var homeClass = homeViews.ContainsKey(name) && (afterExcuse || schoolYear == range || schoolYear.ThroughToday() == range);
         var prepareAbsences = batch.ClassId.Length > 0 && homeClass &&
             (afterExcuse || batch.Csvs.Any(csv => csv.Kind is ReportKind.Absences or ReportKind.Lateness));
         using var preloadCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -971,7 +962,7 @@ internal sealed class MainForm : Form
     {
         var data = await ReportAnalysis.ReadAsync(name, range, batch, browser, progress, token, preparedNotes, afterExcuse);
         var matrix = await Task.Run(data.Build, token);
-        if (matrixCache.IsOpen && matrix.ClassId.Length > 0 && IsComplete(matrix))
+        if (matrixCache.IsOpen && matrix.ClassId.Length > 0 && matrix.HasCompleteReports)
         {
             try
             {
@@ -1139,7 +1130,7 @@ internal sealed class MainForm : Form
         resumeAutomaticRefresh = true;
         var name = previous.ClassName;
         var currentYear = previous.From == schoolYear.From && previous.To <= schoolYear.To;
-        var range = currentYear && matrixCache.IsOpen ? ThroughToday(schoolYear) : new ReportRange(previous.From, previous.To);
+        var range = currentYear && matrixCache.IsOpen ? schoolYear.ThroughToday() : new ReportRange(previous.From, previous.To);
         var regularMatrix = matrixView.CurrentMatrix;
         loadedHome.Remove(name);
         schoolYearMatrices.Remove(name);
@@ -1307,7 +1298,7 @@ internal sealed class MainForm : Form
                     if (openedMyClass is { } opened && !homeViews.ContainsKey(opened))
                         ApplyFreshMatrix(await GetSchoolYearMatrixAsync(opened, schoolYear, progress, token, ShowProgress,
                             refreshFromWeb: true), isSchoolYear: true);
-                    if (matrixRequest is { } requestedMatrix && (requestedMatrix.Range != ThroughToday(schoolYear) ||
+                    if (matrixRequest is { } requestedMatrix && (requestedMatrix.Range != schoolYear.ThroughToday() ||
                         (!homeViews.ContainsKey(requestedMatrix.Name) && !ClassComparer.Equals(requestedMatrix.Name, openedMyClass))))
                         await RefreshRequestedMatrixAsync(requestedMatrix, token, progress);
                     await LoadHomeAsync(token, progress, refreshFromWeb: true);

@@ -22,11 +22,13 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.1
+## Android-Testversion 0.2.0
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden. Öffne **Bei WebUntis anmelden** und melde dich mit deinem Schulkonto an. Nach dem Laden der Klassenliste wählst du eine Klasse oder Gruppe. Die Matrix öffnet sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und nach oben oder unten für weitere Namen. Ein Tipp auf eine Tageszelle zeigt die Details. Über **Konto** kannst du die Klassenliste aktualisieren und dich abmelden.
 
-Die Testversion zeigt die Daten des aktuellen Schuljahres bis heute. Sie hält die Matrix im Arbeitsspeicher und startet jede App-Sitzung mit einem bereinigten WebView-Profil. Entschuldigungen lassen sich in den Tagesdetails lesen. Die Bearbeitung, ein geschützter Offline-Speicher und das Merken der Anmeldung sind für einen späteren Stand vorgesehen.
+Standardmäßig lädt die Testversion das aktuelle Schuljahr bis heute. Über **Zeitraum** kannst du den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. Die Auswahl gilt auch beim Klassenwechsel. **Schuljahr bis heute** setzt den Zeitraum zurück.
+
+Die Testversion hält die Matrix im Arbeitsspeicher und startet jede App-Sitzung mit einem bereinigten WebView-Profil. Entschuldigungen lassen sich in den Tagesdetails lesen. Die Bearbeitung, ein geschützter Offline-Speicher und das Merken der Anmeldung sind für einen späteren Stand vorgesehen.
 
 ### APK bauen
 
@@ -38,3 +40,9 @@ dotnet build Quellcode/Android/WebUntisFehlzeitenMX.Android.csproj -c Release
 ```
 
 Die mit dem lokalen Testschlüssel signierte APK liegt anschließend unter `Quellcode/Android/bin/Release/net10.0-android/android-arm64/`. Für die Weitergabe von Updates müssen alle APKs mit demselben Schlüssel signiert sein.
+
+Die gemeinsame CSV-Auswertung lässt sich mit fiktiven Berichten prüfen:
+
+```sh
+dotnet test Quellcode/Tests/WebUntisAuswertung.Tests.csproj
+```

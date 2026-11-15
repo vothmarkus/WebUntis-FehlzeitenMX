@@ -4,6 +4,12 @@ internal sealed record ReportRange(DateOnly From, DateOnly To)
 {
     public bool IsValid() => From.Year >= 1900 && To.Year < 9998 && To.DayNumber - From.DayNumber is >= 0 and <= 366;
     public bool Contains(DateOnly date) => From <= date && date <= To;
+
+    public ReportRange ThroughToday()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return Contains(today) ? this with { To = today } : this;
+    }
 }
 
 internal static class SchoolYears

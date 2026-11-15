@@ -14,6 +14,7 @@ internal sealed class MatrixPage : ContentPage
     private readonly RowDefinition matrixRow = new(GridLength.Star);
     private readonly Picker classPicker = new() { Title = "Klasse auswählen", TextColor = Ink, TitleColor = Muted };
     private readonly Button refresh = MobileStyle.Button("Aktualisieren", primary: true);
+    private readonly Button rangeButton = MobileStyle.Button("Zeitraum");
     private readonly Button signIn = MobileStyle.Button("Bei WebUntis anmelden", primary: true);
     private readonly Button account = MobileStyle.Button("Konto");
     private readonly Button cancel = MobileStyle.Button("Abbrechen");
@@ -30,12 +31,14 @@ internal sealed class MatrixPage : ContentPage
     private AndroidReports? reports;
     private Student[] classes = [];
     private ReportRange? schoolYear;
+    private ReportRange? selectedRange;
     private AttendanceMatrix? matrix;
     private CancellationTokenSource? transfer;
     private bool profileReady;
     private bool updatingClasses;
     private bool collapsed;
     private bool detailsOpen;
+    private bool rangeOpen;
 
     public MatrixPage()
     {
@@ -49,6 +52,7 @@ internal sealed class MatrixPage : ContentPage
         };
         signIn.Clicked += async (_, _) => await LoadClassesAsync();
         refresh.Clicked += async (_, _) => await LoadSelectedAsync();
+        rangeButton.Clicked += async (_, _) => await ShowRangeAsync();
         account.Clicked += async (_, _) => await ShowAccountAsync();
         cancel.Clicked += (_, _) => CancelTransfer();
         collapse.Clicked += (_, _) =>
@@ -121,7 +125,8 @@ internal sealed class MatrixPage : ContentPage
         };
         tools.Add(classPicker);
         tools.Add(refresh, 1);
-        var actions = new VerticalStackLayout { Spacing = 4, Children = { signIn, tools } };
+        rangeButton.HorizontalOptions = LayoutOptions.Start;
+        var actions = new VerticalStackLayout { Spacing = 4, Children = { signIn, tools, rangeButton } };
         workspace.Add(actions, 0, 1);
 
         var matrixHeaderText = new VerticalStackLayout { Spacing = 3, Children = { matrixTitle, matrixCaption } };
@@ -211,6 +216,8 @@ internal sealed class MatrixPage : ContentPage
             var (available, year) = await service.ClassesAsync(progress, token);
             token.ThrowIfCancellationRequested();
             var prior = classPicker.SelectedItem as Student;
+            if (selectedRange is { } saved && (!year.Contains(saved.From) || !year.Contains(saved.To)))
+                selectedRange = null;
             schoolYear = year;
             classes = available;
             updatingClasses = true;
@@ -238,25 +245,42 @@ internal sealed class MatrixPage : ContentPage
             await RunAsync((service, progress, token) => FetchAsync(choice, service, progress, token));
     }
 
+    private async Task ShowRangeAsync()
+    {
+        if (transfer != null || rangeOpen || schoolYear is not { } year || Window == null) return;
+        var page = new ReportRangePage(year, selectedRange ?? year.ThroughToday(), ApplyRangeAsync);
+        rangeOpen = true;
+        page.Disappearing += (_, _) => rangeOpen = false;
+        try { await Navigation.PushModalAsync(page); }
+        catch (InvalidOperationException) { rangeOpen = false; }
+    }
+
+    private async Task ApplyRangeAsync(ReportRange? value)
+    {
+        if (value == selectedRange || schoolYear is not { } year) return;
+        selectedRange = value;
+        var range = value ?? year.ThroughToday();
+        if (matrix is { } previous && (previous.From != range.From || previous.To != range.To)) ShowMatrix(null);
+        UpdateControls();
+        await LoadSelectedAsync();
+    }
+
     private async Task FetchAsync(Student choice, AndroidReports service, IProgress<string> progress, CancellationToken token)
     {
         if (schoolYear is not { } year) return;
-        var now = DateOnly.FromDateTime(DateTime.Today);
-        var range = year.Contains(now) ? year with { To = now } : year;
+        var range = selectedRange ?? year.ThroughToday();
         if (matrix?.ClassId != choice.Id || matrix.From != range.From) ShowMatrix(null);
         empty.Text = $"{choice.Name} wird geladen …";
         var next = await service.MatrixAsync(choice, range, progress, token);
         token.ThrowIfCancellationRequested();
-        if (matrix is { } previous && Complete(previous) && !Complete(next))
+        if (matrix is { HasCompleteReports: true } && !next.HasCompleteReports)
         {
             status.Text = "WebUntis hat neue Berichte nur teilweise geliefert. Der letzte vollständige Stand bleibt sichtbar.";
             return;
         }
         ShowMatrix(next);
-        status.Text = Complete(next) ? "Aus WebUntis aktualisiert" : "WebUntis hat Berichte nur teilweise geliefert.";
+        status.Text = next.HasCompleteReports ? "Aus WebUntis aktualisiert" : "WebUntis hat Berichte nur teilweise geliefert.";
     }
-
-    private static bool Complete(AttendanceMatrix value) => value.HasAbsenceReport && value.HasLatenessReport && value.HasTimetable;
 
     private async Task RunAsync(Func<AndroidReports, IProgress<string>, CancellationToken, Task> action)
     {
@@ -354,6 +378,7 @@ internal sealed class MatrixPage : ContentPage
             {
                 ShowMatrix(null);
                 schoolYear = null;
+                selectedRange = null;
                 classes = [];
                 classPicker.ItemsSource = classes;
                 empty.Text = "Melde dich an, um deine Klassenliste zu laden.";
@@ -402,6 +427,10 @@ internal sealed class MatrixPage : ContentPage
         classPicker.IsEnabled = !busy;
         refresh.IsVisible = classes.Length > 0;
         refresh.IsEnabled = !busy && classPicker.SelectedItem != null;
+        var range = selectedRange ?? schoolYear?.ThroughToday();
+        rangeButton.IsVisible = range != null;
+        rangeButton.IsEnabled = !busy;
+        if (range != null) rangeButton.Text = $"Zeitraum · {range.From:dd.MM.} – {range.To:dd.MM.}";
         activity.IsVisible = activity.IsRunning = busy;
         cancel.IsVisible = busy;
         cancel.IsEnabled = busy;

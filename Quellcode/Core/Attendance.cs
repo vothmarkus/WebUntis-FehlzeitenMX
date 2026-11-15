@@ -119,6 +119,7 @@ public sealed class AttendanceMatrix
     public bool HasTimetable { get; }
     public bool HasAbsenceReport { get; }
     public bool HasLatenessReport { get; }
+    internal bool HasCompleteReports { get; }
     public bool IsDemo { get; }
     public DateTimeOffset? FetchedAt { get; }
     public IReadOnlyList<SchoolPeriod> SchoolPeriods { get; }
@@ -157,7 +158,10 @@ public sealed class AttendanceMatrix
                 if (report.Complete && report.AllStudentsIncluded) coveredStudents.Add(known.Id);
             }
         }
-        HasTimetable = lessons.Count > 0 && reports.Any(report => report.Kind == ReportKind.Timetable && report.Complete);
+        var timetables = reports.Where(report => report.Kind == ReportKind.Timetable && report.Complete).ToArray();
+        HasTimetable = lessons.Count > 0 && timetables.Length > 0;
+        var emptyTimetable = timetables.Any(report => report.Lessons.Length == 0);
+        HasCompleteReports = HasAbsenceReport && HasLatenessReport && (HasTimetable || emptyTimetable);
         var unmatched = 0;
 
         foreach (var entry in reports.SelectMany(report => report.Entries)
@@ -196,7 +200,7 @@ public sealed class AttendanceMatrix
             .ToDictionary(group => group.Single().Id, group => notesByName[group.Key].ToArray());
         if (unmatched > 0)
             notes.Add($"{unmatched} Zeile(n) konnten keiner Person eindeutig zugeordnet werden.");
-        if (!HasTimetable)
+        if (!HasTimetable && (!emptyTimetable || Days.Length > 0))
             notes.Add("Unterrichtstage werden aus den verfügbaren Einträgen angezeigt.");
         if (!HasAbsenceReport)
             notes.Add("Der Fehlzeitenbericht liegt nicht vollständig vor. Kennzahlen beziehen sich auf die importierten Einträge.");
