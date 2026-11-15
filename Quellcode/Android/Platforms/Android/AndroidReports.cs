@@ -96,6 +96,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
         var waitingForLogin = false;
         var loginShown = false;
         var redirected = false;
+        var browserPromptHandled = false;
         continueRequested = false;
         if (startWithLogin) OpenLogin(navigate: true);
         else
@@ -109,7 +110,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
             token.ThrowIfCancellationRequested();
             if (view.RendererGone)
                 throw new InvalidOperationException("Android WebView wurde beendet. Starte die App erneut.");
-            var state = await ReadReportPageAsync(includeClasses, token);
+            var state = await ReadReportPageAsync(includeClasses, waitingForLogin && !browserPromptHandled, token);
             if (state?.Stage == "reports" && !view.Navigating)
             {
                 showLogin(false);
@@ -122,7 +123,16 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
 
             if (waitingForLogin)
             {
-                if (!view.Navigating && (continueRequested || state is { Stage: "signedIn", AtReports: false }))
+                if (!view.Navigating && state is { BrowserLoginX: { } x, BrowserLoginY: { } y })
+                {
+                    browserPromptHandled = true;
+                    try
+                    {
+                        if (await view.TapAsync(x, y, token)) continueRequested = false;
+                    }
+                    catch (TimeoutException) { }
+                }
+                else if (!view.Navigating && (continueRequested || state is { Stage: "signedIn", AtReports: false }))
                 {
                     waitingForLogin = false;
                     OpenReportPage();
@@ -152,6 +162,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
             waitingForLogin = loginShown = true;
             continueRequested = false;
             redirected = false;
+            browserPromptHandled = false;
             progress.Report("Melde dich auf der WebUntis-Seite an.");
             showLogin(true);
             if (navigate) view.Go(LoginPage);
@@ -167,10 +178,10 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
         }
     }
 
-    private async Task<ReportState?> ReadReportPageAsync(bool includeClasses, CancellationToken token)
+    private async Task<ReportState?> ReadReportPageAsync(bool includeClasses, bool openBrowserLogin, CancellationToken token)
     {
         if (view.Navigating) return null;
-        try { return await CommandAsync("probe", token, includeClasses: includeClasses); }
+        try { return await CommandAsync("probe", token, includeClasses: includeClasses, openBrowserLogin: openBrowserLogin); }
         catch (TimeoutException) { return null; }
     }
 
@@ -535,7 +546,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
 
     private async Task<ReportState> CommandAsync(string action, CancellationToken token, ReportSelection? selection = null,
         ReportKind kind = ReportKind.Absences, bool includeClasses = false, bool roster = false, string? exportId = null,
-        string? waitForFormStamp = null, int? year = null, string? className = null)
+        string? waitForFormStamp = null, int? year = null, string? className = null, bool openBrowserLogin = false)
     {
         token.ThrowIfCancellationRequested();
         if (!IsSchoolAddress(view.Address))
@@ -548,7 +559,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
             from = selection?.From.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             to = selection?.To.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             kind = kind.ToString(), excusedOnly = selection?.ExcusedOnly == true, includeClasses, roster, exportId, waitForFormStamp,
-            allowLandingAsSignedIn = false,
+            allowLandingAsSignedIn = false, openBrowserLogin,
             targetSchoolYear = year, className, lateOnly = kind == ReportKind.Lateness
         }, Json);
         var command = $"globalThis.{CommandName}?.({request})";

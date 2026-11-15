@@ -22,15 +22,17 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.2.1
+## Android-Testversion 0.3.0
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-**Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App. Melde dich dort mit deinem Schulkonto an und tippe danach bei Bedarf auf **Weiter**, um die Klassenliste zu laden. Die App und dein Browser verwenden getrennte Sitzungen.
+**Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Melde dich mit deinem Schulkonto an und tippe danach bei Bedarf auf **Weiter**, um die Klassenliste zu laden.
 
-Nach dem Laden der Klassenliste wählst du eine Klasse oder Gruppe. Die Matrix öffnet sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und nach oben oder unten für weitere Namen. Ein Tipp auf eine Tageszelle zeigt die Details. Über **Konto** kannst du die Klassenliste aktualisieren und dich abmelden.
+Über **⋮** wechselst du zwischen **Startseite**, **Meine Klassen** und **Tagesmatrix**. Unter **Klassen auswählen** legst du die beiden Klassenlisten getrennt fest. Die Startseite stapelt einklappbare Matrizen für die gewählten Klassen. Unter **Meine Klassen** öffnest du eine einzelne Klasse über ihr Kürzel. Über **WebUntis-Konto** kannst du die Klassenliste aktualisieren und dich abmelden.
 
-Standardmäßig lädt die Testversion das aktuelle Schuljahr bis heute. Über **Zeitraum** kannst du den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. Die Auswahl gilt auch beim Klassenwechsel. **Schuljahr bis heute** setzt den Zeitraum zurück.
+Die Matrizen öffnen sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und vertikal für weitere Namen. Tippe für die Tagesdetails auf eine Zelle. Zoome mit zwei Fingern oder über die Prozent-Schaltfläche in der Matrix.
+
+Die Startseite und **Meine Klassen** zeigen das aktuelle Schuljahr bis heute. In der **Tagesmatrix** kannst du über **Zeitraum** den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. Die Auswahl gilt auch beim Klassenwechsel. **Schuljahr bis heute** setzt den Zeitraum zurück.
 
 Die Testversion hält die Matrix im Arbeitsspeicher und startet jede App-Sitzung mit einem bereinigten WebView-Profil. Entschuldigungen lassen sich in den Tagesdetails lesen. Die Bearbeitung, ein geschützter Offline-Speicher und das Merken der Anmeldung sind für einen späteren Stand vorgesehen.
 

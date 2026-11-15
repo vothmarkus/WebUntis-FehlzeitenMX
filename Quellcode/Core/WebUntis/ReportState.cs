@@ -18,6 +18,8 @@ internal sealed class ReportState
     public string? Error { get; set; }
     public string? ClassId { get; set; }
     public bool AtReports { get; set; }
+    public double? BrowserLoginX { get; set; }
+    public double? BrowserLoginY { get; set; }
     public bool HasFrame { get; set; }
     public bool HasStudentFilter { get; set; }
     public bool AllStudents { get; set; }

@@ -54,6 +54,13 @@ function reportCommand(request) {
     }
 
     const loginForm = doc => [...doc.querySelectorAll('input[type="password"]')].some(visible);
+    if (request.openBrowserLogin === true &&
+        /willkommen bei webuntis/i.test(clean(document.body?.innerText || document.body?.textContent))) {
+        const actions = [...document.querySelectorAll('a,button,[role="button"]')].filter(node =>
+            visible(node) && clean(node.innerText || node.textContent).toLowerCase() === "im browser öffnen");
+        const target = actions.length === 1 ? pointerTarget(actions[0], "nearest") : null;
+        if (target) return { stage: "login", browserLoginX: target.x, browserLoginY: target.y };
+    }
     const globalYears = [...document.querySelectorAll('.global-school-year-selection-container .ant-select-selector')];
     const yearLabel = node => /^(\d{4})\s*\/\s*\d{4}$/.exec(clean(node?.getAttribute('title') || node?.textContent))?.[1];
     function topTarget(node) {

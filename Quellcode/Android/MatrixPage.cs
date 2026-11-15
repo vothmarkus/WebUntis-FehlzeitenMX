@@ -6,79 +6,93 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class MatrixPage : ContentPage
 {
-    private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
+    private enum Section { Home, Mine, Matrix }
+
+    private const string LegendText = "• Kein Fehlzeiteintrag\n| Fehlzeit    E Entschuldigt\n+ Verspätet    |+ / E+ Beides\n? Ungeklärt    B Befreit";
+    private const string ChooseClass = "Wähle eine Klasse.";
     private readonly BrowserSurface browser = new();
     private readonly Grid loginLayer = new() { IsVisible = false, BackgroundColor = Surface, HeightRequest = 62, VerticalOptions = LayoutOptions.Start };
     private readonly Label loginAddress = MobileStyle.Label(WebUntisReports.Origin, 12, Muted);
     private readonly Grid workspace = new() { BackgroundColor = Surface };
-    private readonly RowDefinition matrixRow = new(GridLength.Star);
-    private readonly Picker classPicker = new() { Title = "Klasse auswählen", TextColor = Ink, TitleColor = Muted };
-    private readonly Button refresh = MobileStyle.Button("Aktualisieren", primary: true);
+    private readonly Label sectionTitle = MobileStyle.Label("Startseite", 12, Muted);
+    private readonly Button menu = MobileStyle.Button("⋮");
+    private readonly Button refresh = MobileStyle.Button("↻");
     private readonly Button rangeButton = MobileStyle.Button("Zeitraum");
     private readonly Button signIn = MobileStyle.Button("Bei WebUntis anmelden", primary: true);
-    private readonly Button account = MobileStyle.Button("Konto");
+    private readonly Button chooseClasses = MobileStyle.Button("Klassen auswählen", primary: true);
     private readonly Button cancel = MobileStyle.Button("Abbrechen");
-    private readonly ActivityIndicator activity = new() { Color = Accent, HeightRequest = 22, WidthRequest = 22, IsVisible = false };
+    private readonly ActivityIndicator activity = new() { Color = Accent, HeightRequest = 20, WidthRequest = 20, IsVisible = false };
     private readonly Label status = MobileStyle.Label("", 13, Muted);
-    private readonly Label matrixTitle = MobileStyle.Label("", 17, bold: true);
-    private readonly Label matrixCaption = MobileStyle.Label("", 12, Muted);
-    private readonly Label empty = MobileStyle.Label("Melde dich an, um deine Klassenliste zu laden.", 15, Muted);
-    private readonly MatrixCanvas canvas = new() { IsVisible = false };
-    private readonly Label legend = MobileStyle.Label("• Kein Fehlzeiteintrag   | Fehlzeit   E Entschuldigt\n+ Verspätet   |+ / E+ Beides   ? Ungeklärt   B Befreit", 12, Muted);
-    private readonly VerticalStackLayout scrollHeader = new() { Spacing = 4 };
-    private readonly Button collapse = MobileStyle.Button("−");
-    private readonly Button notices = MobileStyle.Button("Abrufhinweise");
+    private readonly Label emptyText = MobileStyle.Label("", 15, Muted);
+    private readonly Picker classPicker = new() { Title = "Klasse auswählen", TextColor = Ink, TitleColor = Muted };
+    private readonly HorizontalStackLayout myButtons = new() { Spacing = 6 };
+    private readonly VerticalStackLayout homeRows = new() { Spacing = 9 };
+    private readonly ScrollView homePage = new();
+    private readonly ScrollView myClasses = new() { Orientation = ScrollOrientation.Horizontal, HorizontalScrollBarVisibility = ScrollBarVisibility.Never };
+    private readonly Grid tools = new();
+    private readonly Grid footer = new();
+    private readonly MatrixCard myCard;
+    private readonly MatrixCard matrixCard;
+    private readonly Border empty;
+    private readonly Dictionary<string, Button> classButtons = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MatrixCard> homeCards = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AttendanceMatrix> yearlyMatrices = new(StringComparer.Ordinal);
+    private ClassSelection classSelection = ClassSelection.Load();
+    private Section section;
     private AndroidReports? reports;
     private Student[] classes = [];
+    private Student? selectedMyClass;
     private ReportRange? schoolYear;
     private ReportRange? selectedRange;
-    private AttendanceMatrix? matrix;
     private CancellationTokenSource? transfer;
     private bool profileReady;
     private bool updatingClasses;
-    private bool collapsed;
-    private bool detailsOpen;
-    private bool rangeOpen;
+    private bool modalOpen;
+    private bool menuOpen;
 
     public MatrixPage()
     {
         Title = "WebUntis-FehlzeitenMX";
         SafeAreaEdges = SafeAreaEdges.All;
         BackgroundColor = Surface;
+        myCard = CreateMatrixCard();
+        matrixCard = CreateMatrixCard();
+        myCard.Clear("", ChooseClass);
+        matrixCard.Clear("", ChooseClass);
+        emptyText.HorizontalTextAlignment = TextAlignment.Center;
+        empty = Card(new VerticalStackLayout { Spacing = 12, Children = { emptyText, signIn, chooseClasses } });
+        empty.VerticalOptions = LayoutOptions.Center;
         classPicker.ItemDisplayBinding = new Binding(nameof(Student.Name));
         classPicker.SelectedIndexChanged += async (_, _) =>
         {
-            if (!updatingClasses && transfer == null) await LoadSelectedAsync();
+            if (updatingClasses || transfer != null) return;
+            if (classPicker.SelectedItem is not Student choice)
+                matrixCard.Clear("", ChooseClass);
+            else if (matrixCard.Matrix?.ClassId != choice.Id)
+                matrixCard.Clear(choice.Name, "Berichte werden geladen …");
+            UpdateControls();
+            await LoadViewAsync(refreshFromWeb: false);
         };
         signIn.Clicked += async (_, _) => await LoadClassesAsync(startWithLogin: true);
-        refresh.Clicked += async (_, _) => await LoadSelectedAsync();
+        chooseClasses.Clicked += async (_, _) => await ShowClassSettingsAsync();
+        refresh.Clicked += async (_, _) => await LoadViewAsync(refreshFromWeb: true);
         rangeButton.Clicked += async (_, _) => await ShowRangeAsync();
-        account.Clicked += async (_, _) => await ShowAccountAsync();
+        menu.Clicked += async (_, _) => await ShowMenuAsync();
         cancel.Clicked += (_, _) => CancelTransfer();
-        collapse.Clicked += (_, _) =>
-        {
-            collapsed = !collapsed;
-            UpdateMatrixVisibility();
-        };
-        notices.Clicked += async (_, _) =>
-        {
-            if (matrix is { Notes.Length: > 0 } current)
-                await DisplayAlertAsync("Abrufhinweise", string.Join(Environment.NewLine + Environment.NewLine, current.Notes), "Schließen");
-        };
-        canvas.DaySelected += async (student, day, cell) => await ShowDetailsAsync(student, day, cell);
+
         var root = new Grid();
         root.Add(browser);
         browser.InputTransparent = true;
         root.Add(workspace);
         root.Add(loginLayer);
-        Content = root;
         BuildWorkspace();
         BuildLogin();
+        Content = root;
         UpdateControls();
 
-        browser.HandlerChanging += (_, eventArgs) =>
+        browser.HandlerChanging += (_, args) =>
         {
-            if (eventArgs.OldHandler == null) return;
+            if (args.OldHandler == null) return;
             transfer?.Cancel();
             if (browser.Browser is { } previous) previous.LoginAddressChanged -= UpdateLoginAddress;
             reports = null;
@@ -87,84 +101,67 @@ internal sealed class MatrixPage : ContentPage
 
     private void BuildWorkspace()
     {
+        workspace.Padding = new Thickness(10, 5);
+        workspace.RowSpacing = 5;
         workspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         workspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        workspace.RowDefinitions.Add(matrixRow);
+        workspace.RowDefinitions.Add(new RowDefinition(GridLength.Star));
         workspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        workspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        workspace.Padding = new Thickness(12, 8);
-        workspace.RowSpacing = 8;
+        workspace.SizeChanged += (_, _) => UpdateFooter();
 
-        var brandTitle = MobileStyle.Label("WebUntis-FehlzeitenMX", 18, bold: true);
-        brandTitle.LineBreakMode = LineBreakMode.WordWrap;
-        var brand = new VerticalStackLayout
-        {
-            Spacing = 2,
-            VerticalOptions = LayoutOptions.Center,
-            Children = { brandTitle, MobileStyle.Label("Berufskolleg für TECHNIK Düren", 12, Muted) }
-        };
-        var logo = new Image { Source = "bkt_logo.png", HeightRequest = 36, WidthRequest = 36, VerticalOptions = LayoutOptions.Center };
+        var logo = new Image { Source = "bkt_logo.png", HeightRequest = 34, WidthRequest = 34, VerticalOptions = LayoutOptions.Center };
         SemanticProperties.SetDescription(logo, "Webseite des Berufskollegs für Technik Düren");
         var schoolLink = new TapGestureRecognizer();
         schoolLink.Tapped += async (_, _) => await Launcher.Default.OpenAsync(new Uri("https://bkt-dn.de"));
         logo.GestureRecognizers.Add(schoolLink);
+        var title = MobileStyle.Label("Fehlzeiten MX", 18, bold: true);
+        title.MaxLines = sectionTitle.MaxLines = 1;
+        title.LineBreakMode = sectionTitle.LineBreakMode = LineBreakMode.TailTruncation;
+        var brand = new VerticalStackLayout { Spacing = 1, VerticalOptions = LayoutOptions.Center, Children = { title, sectionTitle } };
+        menu.WidthRequest = refresh.WidthRequest = 44;
+        menu.FontSize = 24;
+        refresh.FontSize = 21;
+        SemanticProperties.SetDescription(menu, "Menü öffnen");
+        SemanticProperties.SetDescription(refresh, "Aktualisieren");
         var header = new Grid
         {
-            ColumnSpacing = 9,
-            ColumnDefinitions = { new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto) }
+            ColumnSpacing = 7,
+            ColumnDefinitions = { new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto), new(GridLength.Auto) }
         };
         header.Add(logo);
         header.Add(brand, 1);
-        header.Add(account, 2);
+        header.Add(refresh, 2);
+        header.Add(menu, 3);
         workspace.Add(header);
 
-        var tools = new Grid
-        {
-            ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) },
-            ColumnSpacing = 10
-        };
+        myClasses.Content = myButtons;
+        tools.ColumnSpacing = 6;
+        tools.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        tools.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         tools.Add(classPicker);
-        tools.Add(refresh, 1);
-        rangeButton.HorizontalOptions = LayoutOptions.Start;
-        var actions = new VerticalStackLayout { Spacing = 4, Children = { signIn, tools, rangeButton } };
-        workspace.Add(actions, 0, 1);
+        tools.Add(myClasses);
+        tools.Add(rangeButton, 1);
+        workspace.Add(tools, 0, 1);
 
-        var matrixHeaderText = new VerticalStackLayout { Spacing = 3, Children = { matrixTitle, matrixCaption } };
-        var matrixHeader = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) } };
-        matrixHeader.Add(matrixHeaderText);
-        matrixHeader.Add(collapse, 1);
-        collapse.WidthRequest = 44;
-        collapse.VerticalOptions = LayoutOptions.Center;
-        scrollHeader.Children.Add(matrixHeader);
-        notices.FontSize = 12;
-        notices.HorizontalOptions = LayoutOptions.Start;
-        scrollHeader.Children.Add(notices);
-        var body = new Grid
-        {
-            RowDefinitions = { new(GridLength.Auto), new(GridLength.Star) },
-            RowSpacing = 8
-        };
-        body.Add(scrollHeader);
-        empty.HorizontalOptions = LayoutOptions.Center;
-        empty.VerticalOptions = LayoutOptions.Center;
-        empty.HorizontalTextAlignment = TextAlignment.Center;
-        empty.Margin = new Thickness(10, 0);
-        body.Add(canvas, 0, 1);
-        body.Add(empty, 0, 1);
-        workspace.Add(Card(body, new Thickness(9)), 0, 2);
+        homePage.Content = homeRows;
+        var views = new Grid();
+        views.Add(homePage);
+        views.Add(myCard);
+        views.Add(matrixCard);
+        views.Add(empty);
+        workspace.Add(views, 0, 2);
 
-        workspace.Add(legend, 0, 3);
-        var footer = new Grid
-        {
-            ColumnSpacing = 8,
-            ColumnDefinitions = { new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto) }
-        };
-        status.VerticalOptions = LayoutOptions.Center;
-        activity.VerticalOptions = LayoutOptions.Center;
+        footer.ColumnSpacing = 6;
+        footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        status.MaxLines = 1;
+        status.LineBreakMode = LineBreakMode.TailTruncation;
+        status.VerticalOptions = activity.VerticalOptions = LayoutOptions.Center;
         footer.Add(activity);
         footer.Add(status, 1);
         footer.Add(cancel, 2);
-        workspace.Add(footer, 0, 4);
+        workspace.Add(footer, 0, 3);
     }
 
     private void BuildLogin()
@@ -215,50 +212,255 @@ internal sealed class MatrixPage : ContentPage
         return true;
     }
 
+    private async Task ShowMenuAsync()
+    {
+        if (transfer != null || menuOpen || modalOpen) return;
+        menuOpen = true;
+        const string home = "⌂  Startseite", mine = "▤  Meine Klassen", matrix = "▦  Tagesmatrix";
+        const string selection = "☷  Klassen auswählen", legend = "ⓘ  Legende", account = "⚙  WebUntis-Konto";
+        try
+        {
+            var action = await DisplayActionSheetAsync("Fehlzeiten MX", "Schließen", null, home, mine, matrix, selection, legend, account);
+            switch (action)
+            {
+                case home: await OpenSectionAsync(Section.Home); break;
+                case mine: await OpenSectionAsync(Section.Mine); break;
+                case matrix: await OpenSectionAsync(Section.Matrix); break;
+                case selection:
+                    if (classes.Length == 0) await LoadClassesAsync(startWithLogin: true);
+                    await ShowClassSettingsAsync();
+                    break;
+                case legend: await DisplayAlertAsync("Legende", LegendText, "Schließen"); break;
+                case account: await ShowAccountAsync(); break;
+            }
+        }
+        finally { menuOpen = false; }
+    }
+
+    private async Task OpenSectionAsync(Section next)
+    {
+        if (next != section)
+        {
+            section = next;
+            status.Text = "";
+            UpdateControls();
+        }
+        await LoadViewAsync(refreshFromWeb: false);
+    }
+
+    private async Task ShowClassSettingsAsync()
+    {
+        if (transfer != null || modalOpen || classes.Length == 0) return;
+        await ShowModalAsync(new ClassSelectionPage(classes, classSelection, ApplyClassSelectionAsync));
+    }
+
+    private async Task ApplyClassSelectionAsync(ClassSelection selection)
+    {
+        try { selection.Save(); }
+        catch (Exception error) when (error is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            await DisplayAlertAsync("Klassenauswahl", "Die Auswahl konnte nicht gespeichert werden.", "OK");
+            return;
+        }
+        classSelection = selection;
+        SynchronizeClassViews();
+        UpdateControls();
+        await LoadViewAsync(refreshFromWeb: false);
+    }
+
     private async Task LoadClassesAsync(bool startWithLogin)
     {
         await RunAsync(async (service, progress, token) =>
         {
             var (available, year) = await service.ClassesAsync(progress, token, startWithLogin);
             token.ThrowIfCancellationRequested();
-            var prior = classPicker.SelectedItem as Student;
+            if (schoolYear != year)
+            {
+                yearlyMatrices.Clear();
+                homeCards.Clear();
+                myCard.Clear("", ChooseClass);
+                matrixCard.Clear("", ChooseClass);
+            }
             if (selectedRange is { } saved && (!year.Contains(saved.From) || !year.Contains(saved.To)))
+            {
                 selectedRange = null;
+                matrixCard.Clear("", ChooseClass);
+            }
             schoolYear = year;
             classes = available;
-            updatingClasses = true;
-            try
-            {
-                classPicker.ItemsSource = classes;
-                classPicker.SelectedItem = classes.FirstOrDefault(item => item.Id == prior?.Id);
-            }
-            finally { updatingClasses = false; }
-
-            if (classPicker.SelectedItem is Student chosen)
-                await FetchAsync(chosen, service, progress, token);
-            else
-            {
-                ShowMatrix(null);
-                empty.Text = "Wähle eine Klasse.";
-                status.Text = $"{classes.Length} Klassen und Gruppen verfügbar";
-            }
+            FillClassPicker();
+            SynchronizeClassViews();
+            status.Text = $"{classes.Length} Klassen und Gruppen verfügbar";
+            UpdateControls();
+            if (CanLoadView()) await LoadActiveViewAsync(service, progress, token, refreshFromWeb: false);
         });
     }
 
-    private async Task LoadSelectedAsync()
+    private void FillClassPicker()
     {
-        if (classPicker.SelectedItem is Student choice)
-            await RunAsync((service, progress, token) => FetchAsync(choice, service, progress, token));
+        var prior = classPicker.SelectedItem as Student;
+        updatingClasses = true;
+        try
+        {
+            classPicker.ItemsSource = classes;
+            var current = classes.FirstOrDefault(item => item.Id == prior?.Id);
+            classPicker.SelectedItem = current;
+            if (current == null) matrixCard.Clear("", ChooseClass);
+        }
+        finally { updatingClasses = false; }
+    }
+
+    private void SynchronizeClassViews()
+    {
+        var onHome = classes.Where(item => classSelection.Home.Contains(item.Id)).ToArray();
+        var inMine = classes.Where(item => classSelection.Mine.Contains(item.Id)).ToArray();
+        var availableIds = onHome.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var removed in homeCards.Keys.Where(id => !availableIds.Contains(id)).ToArray())
+            homeCards.Remove(removed);
+        homeRows.Children.Clear();
+        foreach (var item in onHome)
+        {
+            if (!homeCards.TryGetValue(item.Id, out var card))
+            {
+                card = CreateMatrixCard(stacked: true);
+                card.Clear(item.Name, "Berichte werden geladen …");
+                homeCards.Add(item.Id, card);
+            }
+            homeRows.Children.Add(card);
+        }
+
+        foreach (var id in yearlyMatrices.Keys.Except(availableIds.Concat(inMine.Select(item => item.Id))).ToArray())
+            yearlyMatrices.Remove(id);
+        selectedMyClass = inMine.FirstOrDefault(item => item.Id == selectedMyClass?.Id);
+        if (selectedMyClass == null) myCard.Clear("", ChooseClass);
+        classButtons.Clear();
+        myButtons.Children.Clear();
+        foreach (var item in inMine)
+        {
+            var button = MobileStyle.Button(item.Name);
+            button.Clicked += async (_, _) => await OpenMyClassAsync(item);
+            classButtons.Add(item.Id, button);
+            myButtons.Children.Add(button);
+        }
+        HighlightMyClass();
+    }
+
+    private async Task OpenMyClassAsync(Student choice)
+    {
+        if (transfer != null) return;
+        if (selectedMyClass?.Id != choice.Id)
+            myCard.Clear(choice.Name, "Berichte werden geladen …");
+        selectedMyClass = choice;
+        HighlightMyClass();
+        UpdateControls();
+        await LoadViewAsync(refreshFromWeb: false);
+    }
+
+    private void HighlightMyClass()
+    {
+        foreach (var (id, button) in classButtons)
+        {
+            var selected = id == selectedMyClass?.Id;
+            button.BackgroundColor = selected ? Accent : Tint;
+            button.TextColor = selected ? Colors.White : Ink;
+        }
+    }
+
+    private bool CanLoadView() => schoolYear != null && (section switch
+    {
+        Section.Home => homeCards.Count > 0,
+        Section.Mine => selectedMyClass != null,
+        _ => classPicker.SelectedItem is Student
+    });
+
+    private Task LoadViewAsync(bool refreshFromWeb) => CanLoadView()
+        ? RunAsync((service, progress, token) => LoadActiveViewAsync(service, progress, token, refreshFromWeb))
+        : Task.CompletedTask;
+
+    private async Task LoadActiveViewAsync(AndroidReports service, IProgress<string> progress, CancellationToken token, bool refreshFromWeb)
+    {
+        if (schoolYear is not { } year) return;
+        var annual = year.ThroughToday();
+        if (section == Section.Home)
+        {
+            await LoadHomeAsync(annual, service, progress, token, refreshFromWeb);
+            return;
+        }
+
+        var isMine = section == Section.Mine;
+        var choice = isMine ? selectedMyClass : classPicker.SelectedItem as Student;
+        if (choice == null) return;
+        var card = isMine ? myCard : matrixCard;
+        var range = isMine ? annual : selectedRange ?? annual;
+        var complete = await FetchCardAsync(card, choice, range, service, progress, token, refreshFromWeb, yearly: isMine);
+        status.Text = complete ? $"{choice.Name} · Tagesmatrix geöffnet" : "WebUntis hat Berichte nur teilweise geliefert.";
+    }
+
+    private async Task LoadHomeAsync(ReportRange range, AndroidReports service, IProgress<string> progress,
+        CancellationToken token, bool refreshFromWeb)
+    {
+        var incomplete = 0;
+        foreach (var choice in classes.Where(item => homeCards.ContainsKey(item.Id)))
+        {
+            token.ThrowIfCancellationRequested();
+            var card = homeCards[choice.Id];
+            try
+            {
+                var classProgress = new InlineProgress<string>(message => progress.Report($"{choice.Name} · {message}"));
+                if (!await FetchCardAsync(card, choice, range, service, classProgress, token, refreshFromWeb, yearly: true))
+                    incomplete++;
+            }
+            catch (Exception error) when (!token.IsCancellationRequested &&
+                error is InvalidOperationException or TimeoutException or IOException or InvalidDataException)
+            {
+                if (browser.Browser is { RendererGone: true }) throw;
+                if (card.Matrix == null) card.Clear(choice.Name, error.Message.Split('\n')[0]);
+                incomplete++;
+            }
+        }
+        var visible = homeCards.Values.Count(card => card.Matrix != null);
+        status.Text = incomplete == 0 ? $"{visible} Klassen geladen" : $"{visible} Klassen sichtbar · {incomplete} Abrufe unvollständig";
+    }
+
+    private async Task<bool> FetchCardAsync(MatrixCard card, Student choice, ReportRange range, AndroidReports service,
+        IProgress<string> progress, CancellationToken token, bool refreshFromWeb, bool yearly)
+    {
+        if (card.Matrix is not { } current || current.ClassId != choice.Id || current.From != range.From || current.To > range.To)
+            card.Clear(choice.Name, "Berichte werden geladen …");
+        if (!refreshFromWeb)
+        {
+            if (card.Matrix is { HasCompleteReports: true } shown && shown.To == range.To) return true;
+            if (yearly && yearlyMatrices.TryGetValue(choice.Id, out var stored) && stored.From == range.From && stored.To == range.To)
+            {
+                card.ShowMatrix(stored);
+                return true;
+            }
+        }
+
+        try
+        {
+            var next = await service.MatrixAsync(choice, range, progress, token);
+            token.ThrowIfCancellationRequested();
+            if (next.HasCompleteReports && yearly) yearlyMatrices[choice.Id] = next;
+            if (next.HasCompleteReports || card.Matrix is not { HasCompleteReports: true }) card.ShowMatrix(next);
+            return next.HasCompleteReports;
+        }
+        catch (OperationCanceledException)
+        {
+            if (card.Matrix == null) card.Clear(choice.Name, "Abruf abgebrochen.");
+            throw;
+        }
+        catch
+        {
+            if (card.Matrix == null) card.Clear(choice.Name, "Daten konnten gerade nicht geladen werden.");
+            throw;
+        }
     }
 
     private async Task ShowRangeAsync()
     {
-        if (transfer != null || rangeOpen || schoolYear is not { } year || Window == null) return;
-        var page = new ReportRangePage(year, selectedRange ?? year.ThroughToday(), ApplyRangeAsync);
-        rangeOpen = true;
-        page.Disappearing += (_, _) => rangeOpen = false;
-        try { await Navigation.PushModalAsync(page); }
-        catch (InvalidOperationException) { rangeOpen = false; }
+        if (transfer != null || modalOpen || schoolYear is not { } year) return;
+        await ShowModalAsync(new ReportRangePage(year, selectedRange ?? year.ThroughToday(), ApplyRangeAsync));
     }
 
     private async Task ApplyRangeAsync(ReportRange? value)
@@ -266,26 +468,10 @@ internal sealed class MatrixPage : ContentPage
         if (value == selectedRange || schoolYear is not { } year) return;
         selectedRange = value;
         var range = value ?? year.ThroughToday();
-        if (matrix is { } previous && (previous.From != range.From || previous.To != range.To)) ShowMatrix(null);
+        if (matrixCard.Matrix is { } previous && (previous.From != range.From || previous.To != range.To))
+            matrixCard.Clear(previous.ClassName, "Berichte werden geladen …");
         UpdateControls();
-        await LoadSelectedAsync();
-    }
-
-    private async Task FetchAsync(Student choice, AndroidReports service, IProgress<string> progress, CancellationToken token)
-    {
-        if (schoolYear is not { } year) return;
-        var range = selectedRange ?? year.ThroughToday();
-        if (matrix?.ClassId != choice.Id || matrix.From != range.From) ShowMatrix(null);
-        empty.Text = $"{choice.Name} wird geladen …";
-        var next = await service.MatrixAsync(choice, range, progress, token);
-        token.ThrowIfCancellationRequested();
-        if (matrix is { HasCompleteReports: true } && !next.HasCompleteReports)
-        {
-            status.Text = "WebUntis hat neue Berichte nur teilweise geliefert. Der letzte vollständige Stand bleibt sichtbar.";
-            return;
-        }
-        ShowMatrix(next);
-        status.Text = next.HasCompleteReports ? "Aus WebUntis aktualisiert" : "WebUntis hat Berichte nur teilweise geliefert.";
+        await LoadViewAsync(refreshFromWeb: false);
     }
 
     private async Task RunAsync(Func<AndroidReports, IProgress<string>, CancellationToken, Task> action)
@@ -311,15 +497,10 @@ internal sealed class MatrixPage : ContentPage
             }
             await action(reports, progress, cancellation.Token);
         }
-        catch (OperationCanceledException)
-        {
-            status.Text = "Abruf abgebrochen";
-            if (matrix == null) empty.Text = "Wähle eine Klasse oder tippe auf Aktualisieren.";
-        }
+        catch (OperationCanceledException) { status.Text = "Abruf abgebrochen"; }
         catch (Exception error)
         {
             status.Text = "Abruf fehlgeschlagen";
-            if (matrix == null) empty.Text = "Daten konnten gerade nicht geladen werden.";
             if (Window != null)
             {
                 ShowLogin(false);
@@ -374,87 +555,102 @@ internal sealed class MatrixPage : ContentPage
 
     private async Task ShowAccountAsync()
     {
-        if (transfer != null) return;
-        var action = await DisplayActionSheetAsync("WebUntis", "Schließen", "Abmelden", "Klassenliste aktualisieren");
-        if (action == "Klassenliste aktualisieren") await LoadClassesAsync(startWithLogin: classes.Length == 0);
+        if (classes.Length == 0)
+        {
+            await LoadClassesAsync(startWithLogin: true);
+            return;
+        }
+        var action = await DisplayActionSheetAsync("WebUntis-Konto", "Schließen", "Abmelden", "Klassenliste aktualisieren");
+        if (action == "Klassenliste aktualisieren") await LoadClassesAsync(startWithLogin: false);
         else if (action == "Abmelden")
         {
-            if (reports == null) return;
             await RunAsync(async (service, _, _) =>
             {
-                ShowMatrix(null);
-                schoolYear = null;
-                selectedRange = null;
+                schoolYear = selectedRange = null;
                 classes = [];
-                classPicker.ItemsSource = classes;
-                empty.Text = "Melde dich an, um deine Klassenliste zu laden.";
+                yearlyMatrices.Clear();
+                FillClassPicker();
+                SynchronizeClassViews();
+                UpdateControls();
                 await service.SignOutAsync();
                 status.Text = "Von WebUntis abgemeldet";
             });
         }
     }
 
-    private void ShowMatrix(AttendanceMatrix? value)
+    private MatrixCard CreateMatrixCard(bool stacked = false)
     {
-        var sameClass = value != null && matrix?.ClassId == value.ClassId && matrix.From == value.From;
-        if (!sameClass) collapsed = false;
-        matrix = value;
-        canvas.SetMatrix(value, sameClass);
-        if (value != null)
+        var card = new MatrixCard(stacked);
+        card.DaySelected += async (data, student, day, cell) =>
         {
-            matrixTitle.Text = $"{value.ClassName} · {value.Days.Length} Unterrichtstage";
-            var stamp = value.FetchedAt?.ToLocalTime().ToString("dd.MM. HH:mm", German);
-            matrixCaption.Text = $"{value.From:dd.MM.yyyy} – {value.To:dd.MM.yyyy}" + (stamp == null ? "" : $" · Stand {stamp}");
-        }
-        UpdateMatrixVisibility();
+            if (transfer != null || modalOpen) return;
+            await ShowModalAsync(new DayDetailPage(student.Name, day, cell, DayDetails.Create(student, day, cell, data.SchoolPeriods)));
+        };
+        card.NotesRequested += async data =>
+        {
+            if (transfer == null)
+                await DisplayAlertAsync("Abrufhinweise", string.Join(Environment.NewLine + Environment.NewLine, data.Notes), "Schließen");
+        };
+        card.ZoomRequested += async canvas => await ShowZoomAsync(canvas);
+        return card;
     }
 
-    private void UpdateMatrixVisibility()
+    private async Task ShowZoomAsync(MatrixCanvas canvas)
     {
-        scrollHeader.IsVisible = matrix != null;
-        matrixRow.Height = collapsed ? GridLength.Auto : GridLength.Star;
-        canvas.IsVisible = matrix is { Days.Length: > 0, Students.Length: > 0 } && !collapsed;
-        empty.IsVisible = matrix == null || (!collapsed && !canvas.IsVisible);
-        if (matrix != null && empty.IsVisible) empty.Text = "Für diese Klasse liegen im Zeitraum keine Unterrichtstage mit auswertbaren Daten vor.";
-        notices.IsVisible = !collapsed && matrix is { Notes.Length: > 0 };
-        collapse.Text = collapsed ? "+" : "−";
-        SemanticProperties.SetDescription(collapse, collapsed ? "Matrix ausklappen" : "Matrix einklappen");
-        legend.IsVisible = canvas.IsVisible;
+        if (transfer != null || modalOpen) return;
+        var zoom = await DisplayActionSheetAsync("Matrixgröße", "Schließen", null, "65 %", "80 %", "100 %", "125 %", "150 %", "180 %");
+        if (zoom?.EndsWith(" %", StringComparison.Ordinal) == true &&
+            int.TryParse(zoom.AsSpan(0, zoom.Length - 2), CultureInfo.InvariantCulture, out var percent))
+            canvas.SetZoom(percent / 100f);
+    }
+
+    private async Task ShowModalAsync(ContentPage page)
+    {
+        if (modalOpen || Window == null) return;
+        modalOpen = true;
+        page.Disappearing += (_, _) => modalOpen = false;
+        try { await Navigation.PushModalAsync(page); }
+        catch (InvalidOperationException) { modalOpen = false; }
     }
 
     private void UpdateControls()
     {
         var busy = transfer != null;
-        signIn.IsVisible = classes.Length == 0;
-        signIn.IsEnabled = !busy;
-        account.IsVisible = reports != null;
-        account.IsEnabled = !busy;
-        classPicker.IsVisible = classes.Length > 0;
-        classPicker.IsEnabled = !busy;
-        refresh.IsVisible = classes.Length > 0;
-        refresh.IsEnabled = !busy && classPicker.SelectedItem != null;
-        var range = selectedRange ?? schoolYear?.ThroughToday();
-        rangeButton.IsVisible = range != null;
-        rangeButton.IsEnabled = !busy;
-        if (range != null) rangeButton.Text = $"Zeitraum · {range.From:dd.MM.} – {range.To:dd.MM.}";
+        var signedIn = classes.Length > 0;
+        var homeVisible = signedIn && section == Section.Home && homeCards.Count > 0;
+        var mineVisible = signedIn && section == Section.Mine && classButtons.Count > 0;
+        var matrixVisible = signedIn && section == Section.Matrix;
+        sectionTitle.Text = signedIn ? section switch
+        {
+            Section.Home => "Startseite",
+            Section.Mine => "Meine Klassen",
+            _ => "Tagesmatrix"
+        } : "Berufskolleg für TECHNIK Düren";
+
+        homePage.IsVisible = homeVisible;
+        myCard.IsVisible = mineVisible;
+        matrixCard.IsVisible = matrixVisible;
+        empty.IsVisible = !homeVisible && !mineVisible && !matrixVisible;
+        emptyText.Text = !signedIn ? "Melde dich bei WebUntis an, um deine Klassenliste zu laden."
+            : $"Wähle Klassen für „{sectionTitle.Text}“ aus.";
+        signIn.IsVisible = !signedIn;
+        chooseClasses.IsVisible = signedIn;
+        menu.IsEnabled = signIn.IsEnabled = chooseClasses.IsEnabled = !busy;
+        refresh.IsVisible = signedIn && CanLoadView();
+        refresh.IsEnabled = !busy;
+        classPicker.IsVisible = rangeButton.IsVisible = matrixVisible;
+        classPicker.IsEnabled = rangeButton.IsEnabled = myButtons.IsEnabled = !busy;
+        myClasses.IsVisible = mineVisible;
+        tools.IsVisible = matrixVisible || mineVisible;
         activity.IsVisible = activity.IsRunning = busy;
-        cancel.IsVisible = busy;
-        cancel.IsEnabled = busy;
-        UpdateMatrixVisibility();
+        cancel.IsVisible = cancel.IsEnabled = busy;
+        UpdateFooter();
     }
 
-    private async Task ShowDetailsAsync(Student student, DateOnly day, DayCell cell)
+    private void UpdateFooter()
     {
-        if (detailsOpen || matrix == null) return;
-        detailsOpen = true;
-        try
-        {
-            var detail = DayDetails.Create(student, day, cell, matrix.SchoolPeriods);
-            var page = new DayDetailPage(student.Name, day, cell, detail);
-            page.Disappearing += (_, _) => detailsOpen = false;
-            await Navigation.PushModalAsync(page);
-        }
-        catch (InvalidOperationException) { detailsOpen = false; }
+        var landscape = workspace.Height > 0 && workspace.Width > workspace.Height;
+        footer.IsVisible = transfer != null || (!landscape && !string.IsNullOrWhiteSpace(status.Text));
     }
 
     private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>

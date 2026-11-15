@@ -7,22 +7,24 @@ namespace WebUntisAuswertung.Mobile;
 internal sealed class MatrixCanvas : GraphicsView, IDrawable
 {
     private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
-    private const float Heading = 50;
-    private const float Row = 40;
-    private const float Column = 49;
+    private readonly bool scrollRowsWithPage;
+    private float zoom = 1;
     private float width, height, horizontal, vertical, startX, startY;
     private AttendanceMatrix? matrix;
     private bool atNewest;
+    private bool pinching;
     private (string Id, DateOnly Day)? selected;
 
-    public MatrixCanvas()
+    public MatrixCanvas(bool scrollRowsWithPage)
     {
+        this.scrollRowsWithPage = scrollRowsWithPage;
         Drawable = this;
         BackgroundColor = Colors.White;
-        SemanticProperties.SetDescription(this, "Tagesmatrix. Wische für weitere Tage und Namen. Tippe auf eine Zelle für die Tagesdetails.");
+        SemanticProperties.SetDescription(this, "Tagesmatrix. Wische für weitere Tage und Namen. Zoome mit zwei Fingern und tippe für Tagesdetails.");
         var pan = new PanGestureRecognizer { TouchPoints = 1 };
         pan.PanUpdated += (_, args) =>
         {
+            if (pinching) return;
             switch (args.StatusType)
             {
                 case GestureStatus.Started:
@@ -31,7 +33,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
                     break;
                 case GestureStatus.Running:
                     horizontal = Math.Clamp(startX - (float)args.TotalX, 0, MaxX);
-                    vertical = Math.Clamp(startY - (float)args.TotalY, 0, MaxY);
+                    if (!scrollRowsWithPage) vertical = Math.Clamp(startY - (float)args.TotalY, 0, MaxY);
                     Invalidate();
                     break;
                 case GestureStatus.Completed:
@@ -43,10 +45,18 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         var tap = new TapGestureRecognizer();
         tap.Tapped += (_, args) =>
         {
-            if (args.GetPosition(this) is { } position) Select(position);
+            if (!pinching && args.GetPosition(this) is { } position) Select(position);
+        };
+        var pinch = new PinchGestureRecognizer();
+        pinch.PinchUpdated += (_, args) =>
+        {
+            pinching = args.Status is GestureStatus.Started or GestureStatus.Running;
+            if (args.Status == GestureStatus.Running)
+                SetZoom(zoom * (float)args.Scale, args.ScaleOrigin);
         };
         GestureRecognizers.Add(pan);
         GestureRecognizers.Add(tap);
+        GestureRecognizers.Add(pinch);
         SizeChanged += (_, _) =>
         {
             if (Width <= 0 || Height <= 0) return;
@@ -59,13 +69,38 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     }
 
     public event Action<Student, DateOnly, DayCell>? DaySelected;
-    private float NameWidth => Math.Clamp(width * 0.4f, 103, 192);
+    public event Action<float>? ZoomChanged;
+    private float Heading => scrollRowsWithPage ? 50 * zoom : Math.Min(50 * zoom, Math.Max(24, height - 24));
+    private float Row => 40 * zoom;
+    private float Column => 49 * zoom;
+    private float NameWidth => Math.Min(width * 0.52f, Math.Clamp(width * 0.4f, 103 * zoom, 192 * zoom));
     private float MaxX => Math.Max(0, (matrix?.Days.Length ?? 0) * Column - Math.Max(0, width - NameWidth));
-    private float MaxY => Math.Max(0, (matrix?.Students.Length ?? 0) * Row - Math.Max(0, height - Heading));
+    private float MaxY => scrollRowsWithPage ? 0 : Math.Max(0, (matrix?.Students.Length ?? 0) * Row - Math.Max(0, height - Heading));
+
+    public void SetZoom(float value) => SetZoom(value, new Point(0.5, 0.5));
+
+    private void SetZoom(float value, Point origin)
+    {
+        if (!float.IsFinite(value)) return;
+        value = Math.Clamp(value, 0.65f, 1.8f);
+        if (Math.Abs(zoom - value) < 0.001f) return;
+        var focusX = (float)Math.Clamp(origin.X, 0, 1) * width;
+        var focusY = (float)Math.Clamp(origin.Y, 0, 1) * height;
+        var day = (horizontal + Math.Max(0, focusX - NameWidth)) / Column;
+        var student = (vertical + Math.Max(0, focusY - Heading)) / Row;
+        zoom = value;
+        horizontal = Math.Clamp(day * Column - Math.Max(0, focusX - NameWidth), 0, MaxX);
+        vertical = Math.Clamp(student * Row - Math.Max(0, focusY - Heading), 0, MaxY);
+        atNewest = MaxX - horizontal < 1;
+        UpdateHeight();
+        Invalidate();
+        ZoomChanged?.Invoke(zoom);
+    }
 
     public void SetMatrix(AttendanceMatrix? value, bool retainOffsets)
     {
         matrix = value;
+        UpdateHeight();
         if (!retainOffsets)
         {
             selected = null;
@@ -75,6 +110,11 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         horizontal = atNewest ? MaxX : Math.Clamp(horizontal, 0, MaxX);
         vertical = Math.Clamp(vertical, 0, MaxY);
         Invalidate();
+    }
+
+    private void UpdateHeight()
+    {
+        if (scrollRowsWithPage) HeightRequest = Heading + (matrix?.Students.Length ?? 0) * Row;
     }
 
     private void Select(Point position)
@@ -93,7 +133,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
 
     public void Draw(ICanvas canvas, RectF dirtyRect)
     {
-        if (matrix == null || width <= 0 || height <= Heading) return;
+        if (matrix == null || width <= 32 || height <= Heading) return;
         var nameWidth = NameWidth;
         var firstColumn = (int)(horizontal / Column);
         var firstRow = (int)(vertical / Row);
@@ -109,8 +149,10 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
             var day = matrix.Days[column];
             var x = nameWidth + column * Column - horizontal;
             Cell(canvas, x, 0, Column, Heading, MobileStyle.Surface);
-            Text(canvas, day.ToString("ddd", German).TrimEnd('.'), x, 6, Column, 17, MobileStyle.Muted, 11, HorizontalAlignment.Center);
-            Text(canvas, day.ToString("dd.MM.", German), x, 22, Column, 23, MobileStyle.Ink, 12, HorizontalAlignment.Center, bold: true);
+            Text(canvas, day.ToString("ddd", German).TrimEnd('.'), x, Heading * 0.1f, Column, Heading * 0.37f,
+                MobileStyle.Muted, 11, HorizontalAlignment.Center);
+            Text(canvas, day.ToString("dd.MM.", German), x, Heading * 0.45f, Column, Heading * 0.47f,
+                MobileStyle.Ink, 12, HorizontalAlignment.Center, bold: true);
         }
         canvas.RestoreState();
 
@@ -156,11 +198,11 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         canvas.DrawLine(x, y + h - 0.5f, x + w, y + h - 0.5f);
     }
 
-    private static void Text(ICanvas canvas, string text, float x, float y, float w, float h, Color color, float size,
+    private void Text(ICanvas canvas, string text, float x, float y, float w, float h, Color color, float size,
         HorizontalAlignment alignment, bool bold = false)
     {
         canvas.FontColor = color;
-        canvas.FontSize = size;
+        canvas.FontSize = Math.Min(size * zoom, h * 0.8f);
         canvas.Font = bold ? Microsoft.Maui.Graphics.Font.DefaultBold : Microsoft.Maui.Graphics.Font.Default;
         canvas.DrawString(text, x, y, w, h, alignment, VerticalAlignment.Center, TextFlow.ClipBounds);
     }
