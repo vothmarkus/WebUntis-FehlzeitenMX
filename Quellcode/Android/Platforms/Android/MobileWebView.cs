@@ -69,7 +69,10 @@ internal sealed class MobileWebView : IDisposable
         ShowingLogin = visible;
         host.ImportantForAccessibility = visible ? ImportantForAccessibility.Auto : ImportantForAccessibility.NoHideDescendants;
         host.DescendantFocusability = visible ? DescendantFocusability.AfterDescendants : DescendantFocusability.BlockDescendants;
-        if (visible) (loginPopup ?? reports).RequestFocus();
+        if (visible)
+        {
+            if (!editing) (loginPopup ?? reports).RequestFocus();
+        }
         else
         {
             reports.ClearFocus();
@@ -93,13 +96,27 @@ internal sealed class MobileWebView : IDisposable
 
     public async Task ResetEditorZoomAsync(CancellationToken token)
     {
-        if (!editing || rendererGone || !WebUntisReports.IsSchoolAddress(Address)) return;
+        if (!editing || disposed || rendererGone || !WebUntisReports.IsSchoolAddress(Address)) return;
         var revision = NavigationRevision;
-        var json = await EvaluateAsync("window.visualViewport?.scale ?? 1", token);
-        token.ThrowIfCancellationRequested();
-        if (editing && !rendererGone && NavigationRevision == revision && JsonNode.Parse(json) is JsonValue value &&
-            value.TryGetValue<double>(out var scale) && double.IsFinite(scale) && scale > 0 && Math.Abs(scale - 1) > 0.01)
-            reports.ZoomBy((float)Math.Clamp(1 / scale, 0.01, 100));
+        const string fit = """
+            (() => {
+                const dialog = document.documentElement.fehlzeitenMxAbsenceEditor?.dialog;
+                if (!dialog?.isConnected || !window.visualViewport) return null;
+                return window.visualViewport.width / dialog.getBoundingClientRect().width;
+            })()
+            """;
+        try
+        {
+            var json = await EvaluateAsync(fit, token);
+            token.ThrowIfCancellationRequested();
+            // Match the visible viewport to the laid-out form width, even when WebView retained a different page scale.
+            if (editing && !disposed && !rendererGone && NavigationRevision == revision &&
+                JsonNode.Parse(json) is JsonValue value && value.TryGetValue<double>(out var factor) &&
+                double.IsFinite(factor) && factor > 0 && Math.Abs(factor - 1) > 0.01)
+                reports.ZoomBy((float)Math.Clamp(factor, 0.01, 100));
+        }
+        catch (Exception error) when (error is TimeoutException or ObjectDisposedException or
+            System.Text.Json.JsonException or Java.Lang.Exception) { }
     }
 
     public async Task<bool> TapAsync(double x, double y, CancellationToken token)

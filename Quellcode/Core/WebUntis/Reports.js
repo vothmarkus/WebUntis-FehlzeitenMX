@@ -674,7 +674,10 @@ function reportCommand(request) {
 
         // The host sizes the window. Keep Dijit from fitting this dialog inside it a second time.
         const widget = widgetById(current.getAttribute("widgetid") || current.id, page);
-        if (widget?.domNode === current && Number.isFinite(widget.maxRatio)) widget.maxRatio = Infinity;
+        if (widget?.domNode === current) {
+            if (Number.isFinite(widget.maxRatio)) widget.maxRatio = Infinity;
+            if (mobile && typeof widget.autofocus === "boolean") widget.autofocus = false;
+        }
 
         // The scroll area can be an inner wrapper. Let every ancestor of the original form grow with it.
         const parts = [current.querySelector(".dijitDialogTitleBar"), current.querySelector(".dijitDialogPaneActionBar")].filter(Boolean);
@@ -722,7 +725,11 @@ function reportCommand(request) {
             `);
         }
         page.scrollTo(0, 0);
-        if (mobile) fitFormWidth();
+        if (mobile) {
+            // Dijit focuses the first editable field on open. Defer text focus until the teacher taps the form.
+            if (form.contains(doc.activeElement)) doc.activeElement.blur();
+            fitFormWidth();
+        }
         const size = measure();
         if (!size) return { error: "Die Größe des WebUntis-Entschuldigungsformulars konnte nicht bestimmt werden." };
         if (!mobile) {

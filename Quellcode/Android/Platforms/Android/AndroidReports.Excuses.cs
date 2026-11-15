@@ -84,10 +84,11 @@ internal sealed partial class AndroidReports
             // Recover sign-in while opening the form, before the teacher can enter or save anything.
             await WithAbsenceListAsync(year, progress, token, OpenEditorAsync);
 
-            if (!closed)
+            if (!closed && !closeExcuse)
             {
                 view.SetEditing(true);
-                showExcuse(true);
+                await view.ResetEditorZoomAsync(token);
+                if (!closed && !closeExcuse) showExcuse(true);
             }
             while (!closed && !closeExcuse)
             {

@@ -214,8 +214,7 @@ internal sealed class MatrixPage : ContentPage
         {
             if (!excuseVisible || browser.Browser is not { } view || transfer is not { } current) return;
             try { await view.ResetEditorZoomAsync(current.Token); }
-            catch (Exception error) when (error is OperationCanceledException or TimeoutException or ObjectDisposedException
-                or System.Text.Json.JsonException or Java.Lang.Exception) { }
+            catch (OperationCanceledException) { }
         };
         SemanticProperties.SetDescription(browserClose, "Anmeldung abbrechen");
         browserClose.Clicked += (_, _) =>

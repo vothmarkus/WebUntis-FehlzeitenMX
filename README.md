@@ -22,11 +22,11 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.6.5
+## Android-Testversion 0.6.6
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-Installiere 0.6.5 als Update über 0.6.4, 0.6.3, 0.6.2, 0.6.1, 0.6.0, 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
+Installiere 0.6.6 als Update über 0.6.5, 0.6.4, 0.6.3, 0.6.2, 0.6.1, 0.6.0, 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
 
 Unter **⋮ → Einstellungen** findest du **Anmeldung**, **Klassenauswahl**, **Legende**, **App-Update** und **Impressum**. **App-Update** sucht beim Öffnen der Einstellungen nach Android-Releases auf GitHub. Wenn eine neuere ARM64-Version verfügbar ist, lädt die App die APK auf Wunsch, prüft sie und öffnet die Android-Installation. Bestätige dort das Update. Android kann beim ersten In-App-Update nach der Installationsfreigabe für Fehlzeiten MX fragen.
 
