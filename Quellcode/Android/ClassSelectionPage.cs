@@ -4,41 +4,52 @@ using static WebUntisAuswertung.Mobile.MobileStyle;
 
 namespace WebUntisAuswertung.Mobile;
 
-internal sealed record ClassSelection(string[] Home, string[] Mine)
+internal sealed record ClassSelection(string[] Mine, string[] Teachers)
 {
-    private const string StorageKey = "ClassSelection";
+    private const string StorageKey = "ClassSelectionV2";
+    private const string PreviousStorageKey = "ClassSelection";
 
     public static ClassSelection Load()
     {
-        var saved = Preferences.Default.Get(StorageKey, "");
-        if (saved.Length > 0)
+        try
         {
-            try
-            {
-                if (JsonSerializer.Deserialize<ClassSelection>(saved) is { Home: not null, Mine: not null } selection)
-                    return selection;
-            }
-            catch (JsonException) { }
+            var saved = Preferences.Default.Get(StorageKey, "");
+            if (saved.Length > 0 && JsonSerializer.Deserialize<ClassSelection>(saved) is { Mine: not null, Teachers: not null } selection)
+                return selection with { Mine = selection.Mine.Union(selection.Teachers, StringComparer.Ordinal).ToArray() };
+            var previous = Preferences.Default.Get(PreviousStorageKey, "");
+            if (previous.Length > 0 && JsonSerializer.Deserialize<PreviousSelection>(previous) is { Home: not null, Mine: not null } old)
+                return new(old.Home.Union(old.Mine, StringComparer.Ordinal).ToArray(), []);
         }
+        catch (JsonException) { }
         return new([], []);
     }
 
     public void Save() => Preferences.Default.Set(StorageKey, JsonSerializer.Serialize(this));
+
+    public IEnumerable<Student> OrderClasses(IEnumerable<Student> available)
+    {
+        var mine = Mine.ToHashSet(StringComparer.Ordinal);
+        var teachers = Teachers.ToHashSet(StringComparer.Ordinal);
+        mine.UnionWith(teachers);
+        return available.Where(item => mine.Contains(item.Id)).OrderByDescending(item => teachers.Contains(item.Id));
+    }
+
+    private sealed record PreviousSelection(string[] Home, string[] Mine);
 }
 
 internal sealed class ClassSelectionPage : ContentPage
 {
     private readonly Student[] classes;
-    private readonly HashSet<string> home;
     private readonly HashSet<string> mine;
+    private readonly HashSet<string> teachers;
     private readonly VerticalStackLayout rows = new();
     private bool closing;
 
     public ClassSelectionPage(Student[] classes, ClassSelection selection, Func<ClassSelection, Task> apply)
     {
         this.classes = classes;
-        home = new(selection.Home, StringComparer.Ordinal);
         mine = new(selection.Mine, StringComparer.Ordinal);
+        teachers = new(selection.Teachers, StringComparer.Ordinal);
         SafeAreaEdges = SafeAreaEdges.All;
         BackgroundColor = Surface;
         var title = MobileStyle.Label("Klassen auswählen", 21, bold: true);
@@ -47,12 +58,12 @@ internal sealed class ClassSelectionPage : ContentPage
         search.TextChanged += (_, args) => FillRows(args.NewTextValue?.Trim() ?? "");
         var head = NewRow();
         head.Add(MobileStyle.Label("Klasse", 13, bold: true));
-        head.Add(ColumnTitle("Startseite"), 1);
-        head.Add(ColumnTitle("Meine Klassen"), 2);
+        head.Add(ColumnTitle("Meine Klassen"), 1);
+        head.Add(ColumnTitle("Klassenlehrer"), 2);
         var cancel = MobileStyle.Button("Abbrechen");
         var save = MobileStyle.Button("Übernehmen", primary: true);
         cancel.Clicked += async (_, _) => await CloseAsync(null);
-        save.Clicked += async (_, _) => await CloseAsync(new ClassSelection(home.ToArray(), mine.ToArray()));
+        save.Clicked += async (_, _) => await CloseAsync(new ClassSelection(mine.ToArray(), teachers.ToArray()));
         var actions = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new(GridLength.Star), new(GridLength.Star) } };
         actions.Add(cancel);
         actions.Add(save, 1);
@@ -95,8 +106,18 @@ internal sealed class ClassSelectionPage : ContentPage
             var name = MobileStyle.Label(item.Name, 14, bold: true);
             name.VerticalOptions = LayoutOptions.Center;
             row.Add(name);
-            row.Add(Check(item, home, "Startseite"), 1);
-            row.Add(Check(item, mine, "Meine Klassen"), 2);
+            var own = Check(item, mine, "Meine Klassen");
+            var teacher = Check(item, teachers, "Klassenlehrer");
+            own.CheckedChanged += (_, args) =>
+            {
+                if (!args.Value) teacher.IsChecked = false;
+            };
+            teacher.CheckedChanged += (_, args) =>
+            {
+                if (args.Value) own.IsChecked = true;
+            };
+            row.Add(own, 1);
+            row.Add(teacher, 2);
             rows.Children.Add(row);
         }
         if (rows.Children.Count == 0)
@@ -111,7 +132,7 @@ internal sealed class ClassSelectionPage : ContentPage
     {
         Padding = new Thickness(8, 2),
         ColumnSpacing = 4,
-        ColumnDefinitions = { new(GridLength.Star), new(new GridLength(80)), new(new GridLength(86)) }
+        ColumnDefinitions = { new(GridLength.Star), new(new GridLength(86)), new(new GridLength(90)) }
     };
 
     private static Label ColumnTitle(string text)

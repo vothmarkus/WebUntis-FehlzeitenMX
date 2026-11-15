@@ -76,7 +76,6 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     }
 
     public event Action<Student, DateOnly, DayCell>? DaySelected;
-    public event Action<float>? ZoomChanged;
     public event Action<float, bool>? VerticalScrolled;
     private float Heading => Math.Min(50 * zoom, Math.Max(24, height - 24));
     private float Row => 40 * zoom;
@@ -84,8 +83,6 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     private float NameWidth => Math.Min(width * 0.52f, Math.Clamp(width * 0.4f, 103 * zoom, 192 * zoom));
     private float MaxX => Math.Max(0, (matrix?.Days.Length ?? 0) * Column - Math.Max(0, width - NameWidth));
     private float MaxY => Math.Max(0, (matrix?.Students.Length ?? 0) * Row - Math.Max(0, height - Heading));
-
-    public void SetZoom(float value) => SetZoom(value, new Point(0.5, 0.5));
 
     private void SetZoom(float value, Point origin)
     {
@@ -101,7 +98,6 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         vertical = Math.Clamp(student * Row - Math.Max(0, focusY - Heading), 0, MaxY);
         atNewest = MaxX - horizontal < 1;
         Invalidate();
-        ZoomChanged?.Invoke(zoom);
     }
 
     public void SetMatrix(AttendanceMatrix? value, bool retainOffsets)

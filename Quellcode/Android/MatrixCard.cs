@@ -12,23 +12,22 @@ internal sealed class MatrixCard : ContentView
     private readonly Grid header;
     private readonly Label title = MobileStyle.Label("", 16, bold: true);
     private readonly Label caption = MobileStyle.Label("", 12, Muted);
+    private readonly Label dataStand = MobileStyle.Label("", 12, Muted);
     private readonly Label message = MobileStyle.Label("", 14, Muted);
     private readonly Button previous = HeaderButton("‹", "Vorherige Klasse", 36);
     private readonly Button next = HeaderButton("›", "Nächste Klasse", 36);
-    private readonly Button menu = HeaderButton("⋮", "Menü öffnen", 38);
     private readonly Button notes = MobileStyle.Button("ⓘ");
-    private readonly Button zoom = MobileStyle.Button("100 %");
+    private bool fromDevice;
     private string className = "";
     private int deckIndex, deckCount;
 
     public AttendanceMatrix? Matrix { get; private set; }
+    public bool IsFromDevice => fromDevice;
     public event Action<AttendanceMatrix, Student, DateOnly, DayCell>? DaySelected;
-    public event Action<MatrixCanvas>? ZoomRequested;
     public event Action<AttendanceMatrix>? NotesRequested;
     public event Action<float, bool>? VerticalScrolled;
     public event Action<int>? AdjacentRequested;
     public event Action? ClassPickerRequested;
-    public event Action? MenuRequested;
 
     public MatrixCard(bool inDeck = false)
     {
@@ -37,11 +36,10 @@ internal sealed class MatrixCard : ContentView
         {
             if (Matrix is { } current) DaySelected?.Invoke(current, student, day, cell);
         };
-        canvas.ZoomChanged += value => zoom.Text = $"{value * 100:0} %";
         canvas.VerticalScrolled += (distance, atTop) => VerticalScrolled?.Invoke(distance, atTop);
 
-        title.LineBreakMode = caption.LineBreakMode = LineBreakMode.TailTruncation;
-        title.MaxLines = caption.MaxLines = 1;
+        title.LineBreakMode = caption.LineBreakMode = dataStand.LineBreakMode = LineBreakMode.TailTruncation;
+        title.MaxLines = caption.MaxLines = dataStand.MaxLines = 1;
         var heading = new VerticalStackLayout
         {
             VerticalOptions = LayoutOptions.Center,
@@ -62,27 +60,24 @@ internal sealed class MatrixCard : ContentView
         header = new Grid
         {
             ColumnSpacing = 4,
+            RowSpacing = 2,
+            RowDefinitions = { new(GridLength.Auto), new(GridLength.Auto) },
             ColumnDefinitions =
             {
-                new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto),
-                new(GridLength.Auto), new(GridLength.Auto), new(GridLength.Auto)
+                new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto), new(GridLength.Auto)
             }
         };
         header.Add(previous);
         header.Add(heading, 1);
         header.Add(next, 2);
-        header.Add(zoom, 3);
-        header.Add(notes, 4);
-        header.Add(menu, 5);
-        menu.IsVisible = false;
+        header.Add(notes, 3);
+        header.Add(dataStand, 0, 1);
+        Grid.SetColumnSpan(dataStand, 4);
         notes.WidthRequest = 40;
         notes.Padding = Thickness.Zero;
-        SemanticProperties.SetDescription(zoom, "Matrixgröße ändern");
         SemanticProperties.SetDescription(notes, "Abrufhinweise");
         previous.Clicked += (_, _) => AdjacentRequested?.Invoke(-1);
         next.Clicked += (_, _) => AdjacentRequested?.Invoke(1);
-        menu.Clicked += (_, _) => MenuRequested?.Invoke();
-        zoom.Clicked += (_, _) => ZoomRequested?.Invoke(canvas);
         notes.Clicked += (_, _) =>
         {
             if (Matrix is { } current) NotesRequested?.Invoke(current);
@@ -114,10 +109,11 @@ internal sealed class MatrixCard : ContentView
         UpdateVisibility();
     }
 
-    public void ShowMatrix(AttendanceMatrix value)
+    public void ShowMatrix(AttendanceMatrix value, bool fromDevice = false)
     {
         var sameClass = Matrix is { } current && current.ClassId == value.ClassId && current.From == value.From;
         Matrix = value;
+        this.fromDevice = fromDevice;
         className = value.ClassName;
         UpdateHeading();
         message.Text = "Für diese Klasse liegen im Zeitraum keine Unterrichtstage mit auswertbaren Daten vor.";
@@ -125,34 +121,32 @@ internal sealed class MatrixCard : ContentView
         UpdateVisibility();
     }
 
-    public void SetDeckPosition(int index, int count, bool navigationEnabled)
+    public void SetDeckPosition(int index, int count)
     {
         deckIndex = index;
         deckCount = count;
         previous.IsVisible = next.IsVisible = count > 1;
-        previous.IsEnabled = next.IsEnabled = navigationEnabled;
         UpdateHeading();
-    }
-
-    public void SetCompactMenu(bool show, bool enabled)
-    {
-        menu.IsVisible = show;
-        menu.IsEnabled = enabled;
     }
 
     private void UpdateHeading()
     {
         title.Text = deckCount > 1 ? $"{className} · {deckIndex + 1} / {deckCount}"
             : Matrix is { } value ? $"{className} · {value.Days.Length} Unterrichtstage" : className;
-        if (Matrix is not { } matrix)
-            caption.Text = "";
-        else
+        caption.Text = dataStand.Text = "";
+        if (Matrix is { } matrix)
         {
-            var stamp = matrix.FetchedAt?.ToLocalTime().ToString("dd.MM. HH:mm", German);
             var days = inDeck && deckCount > 1 ? $" · {matrix.Days.Length} Unterrichtstage" : "";
-            caption.Text = $"{matrix.From:dd.MM.yyyy} – {matrix.To:dd.MM.yyyy}{days}" + (stamp == null ? "" : $" · Stand {stamp}");
+            caption.Text = $"{matrix.From:dd.MM.yyyy} – {matrix.To:dd.MM.yyyy}{days}";
+            if (matrix.FetchedAt is { } fetched)
+            {
+                var stamp = fetched.ToLocalTime().ToString("dd.MM.yyyy HH:mm 'Uhr'", German);
+                var label = fromDevice ? "Gespeicherter Stand" : matrix.HasCompleteReports ? "Stand" : "Teilstand";
+                dataStand.Text = $"{label} {stamp}";
+            }
         }
         caption.IsVisible = caption.Text.Length > 0;
+        dataStand.IsVisible = dataStand.Text.Length > 0;
     }
 
     private void UpdateVisibility()
@@ -161,7 +155,6 @@ internal sealed class MatrixCard : ContentView
         canvas.IsVisible = Matrix is { Days.Length: > 0, Students.Length: > 0 };
         message.IsVisible = !canvas.IsVisible;
         notes.IsVisible = Matrix is { Notes.Length: > 0 };
-        zoom.IsVisible = canvas.IsVisible;
     }
 
     private static Button HeaderButton(string text, string description, double width)

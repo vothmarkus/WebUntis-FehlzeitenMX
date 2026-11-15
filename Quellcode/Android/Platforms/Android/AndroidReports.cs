@@ -7,6 +7,9 @@ using static WebUntisAuswertung.Core.WebUntisReports;
 
 namespace WebUntisAuswertung.Mobile;
 
+internal sealed class WebUntisSignInRequiredException()
+    : Exception("Melde dich bei WebUntis an, um die Daten zu aktualisieren.");
+
 internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin) : IReportSupplement
 {
     private const string LoginPage = Origin + "/WebUntis/?school=bkt";
@@ -15,6 +18,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
     private readonly SemaphoreSlim supplements = new(1);
     private bool reload = true;
     private bool continueRequested;
+    private bool allowMatrixSignIn;
     private Student? currentClass;
 
     public async Task<(Student[] Classes, ReportRange SchoolYear)> ClassesAsync(IProgress<string> progress, CancellationToken token,
@@ -42,10 +46,12 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
         finally { showLogin(false); }
     }
 
-    public async Task<AttendanceMatrix> MatrixAsync(Student choice, ReportRange range, IProgress<string> progress, CancellationToken token)
+    public async Task<MatrixData> MatrixAsync(Student choice, ReportRange range, IProgress<string> progress,
+        CancellationToken token, bool allowSignIn)
     {
         var selection = new ReportSelection(choice.Id, range.From, range.To);
         currentClass = choice;
+        allowMatrixSignIn = allowSignIn;
         try
         {
             await PrepareAsync(selection, progress, token);
@@ -69,13 +75,13 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
                     reload = true;
                 }
             }
-            var data = await ReportAnalysis.ReadAsync(choice.Name, range, batch, this, progress, token);
-            return await Task.Run(data.Build, token);
+            return await ReportAnalysis.ReadAsync(choice.Name, range, batch, this, progress, token);
         }
         catch { reload = true; throw; }
         finally
         {
             currentClass = null;
+            allowMatrixSignIn = false;
             showLogin(false);
         }
     }
@@ -90,7 +96,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
     public void ContinueAfterLogin() => continueRequested = true;
 
     private async Task<ReportState> OpenReportsAsync(IProgress<string> progress, CancellationToken token,
-        bool includeClasses = false, bool startWithLogin = false)
+        bool includeClasses = false, bool startWithLogin = false, bool allowSignIn = true)
     {
         var waiting = Stopwatch.StartNew();
         var waitingForLogin = false;
@@ -150,7 +156,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
 
             if (!waitingForLogin && waiting.Elapsed > TimeSpan.FromSeconds(28))
             {
-                if (loginShown)
+                if (!allowSignIn || loginShown)
                     throw new TimeoutException("WebUntis hat das Berichtsformular nicht geladen. Melde dich erneut an und tippe danach auf Weiter.");
                 OpenLogin(navigate: true);
             }
@@ -159,6 +165,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
 
         void OpenLogin(bool navigate)
         {
+            if (!allowSignIn) throw new WebUntisSignInRequiredException();
             waitingForLogin = loginShown = true;
             continueRequested = false;
             redirected = false;
@@ -250,12 +257,12 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
 
     private async Task PrepareAsync(ReportSelection selection, IProgress<string> progress, CancellationToken token)
     {
-        var start = await OpenReportsAsync(progress, token);
+        var start = await OpenReportsAsync(progress, token, allowSignIn: allowMatrixSignIn);
         var year = SchoolYears.StartYear(selection.From);
         if (start.GlobalYear is { } shown && shown != year.ToString(CultureInfo.InvariantCulture))
         {
             await SelectYearAsync(year, token);
-            await OpenReportsAsync(progress, token);
+            await OpenReportsAsync(progress, token, allowSignIn: allowMatrixSignIn);
         }
         start = await ConfigureRangeAsync(selection, token);
         if (currentClass is { } choice && !start.Classes.Any(item =>
@@ -532,7 +539,9 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
                 {
                     var state = await CommandAsync(action, token, selection, kind, waitForFormStamp: changed, year: year, className: className);
                     if (accept(state)) return state;
-                    if (state.NotesUnavailable || state.Error != null || state.Stage is "login" or "external" or "denied" or "wrongYear" ||
+                    if (state.Stage is "login" or "external" || view.MainStatus == 401)
+                        throw new WebUntisSignInRequiredException();
+                    if (state.NotesUnavailable || state.Error != null || state.Stage is "denied" or "wrongYear" ||
                         view.MainStatus >= 400) return null;
                     if (state.ChangedField != null) changed = state.FormStamp;
                 }
@@ -571,9 +580,9 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
 
     private static void Check(ReportState state)
     {
-        if (state.Error != null) throw new InvalidOperationException(state.Error);
         if (state.Stage is "login" or "external")
-            throw new InvalidOperationException("WebUntis verlangt eine neue Anmeldung. Starte den Abruf erneut.");
+            throw new WebUntisSignInRequiredException();
+        if (state.Error != null) throw new InvalidOperationException(state.Error);
         if (state.Stage != "reports")
             throw new InvalidOperationException("WebUntis hat das Berichtsformular während des Abrufs verlassen.");
     }

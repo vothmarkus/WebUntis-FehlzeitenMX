@@ -25,5 +25,12 @@ internal static class MauiProgram
 
 internal sealed class MobileApp : Application
 {
-    protected override Window CreateWindow(IActivationState? activationState) => new(new MatrixPage());
+    protected override Window CreateWindow(IActivationState? activationState)
+    {
+        var page = new MatrixPage();
+        var window = new Window(page);
+        window.Stopped += (_, _) => page.PauseRefresh();
+        window.Resumed += (_, _) => page.ResumeRefresh();
+        return window;
+    }
 }

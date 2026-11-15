@@ -12,7 +12,6 @@ internal sealed class MatrixDeck : ContentView
     private readonly Border far = Card(new Grid(), Thickness.Zero);
     private Entry[] entries = [];
     private int index;
-    private bool navigationEnabled = true;
 
     public IReadOnlyList<Entry> Entries => entries;
     public Entry? Active => entries.Length == 0 ? null : entries[index];
@@ -27,20 +26,20 @@ internal sealed class MatrixDeck : ContentView
         Content = new Grid { IsClippedToBounds = true, Children = { far, near, front } };
     }
 
-    public void SetClasses(IEnumerable<Student> classes, Func<MatrixCard> createCard)
+    public void SetClasses(IEnumerable<Student> classes, Func<MatrixCard> createCard, bool firstCard = false)
     {
-        var activeId = Active?.Class.Id;
+        var activeId = firstCard ? null : Active?.Class.Id;
         var prior = entries.ToDictionary(entry => entry.Class.Id, entry => entry.Card, StringComparer.Ordinal);
         entries = classes.Select(choice =>
         {
             if (!prior.TryGetValue(choice.Id, out var card))
             {
                 card = createCard();
-                card.Clear(choice.Name, "Berichte werden geladen …");
+                card.Clear(choice.Name, "Für diese Klasse liegt noch kein Datenstand vor.");
                 card.AdjacentRequested += Step;
                 card.ClassPickerRequested += () =>
                 {
-                    if (navigationEnabled && entries.Length > 1) ClassPickerRequested?.Invoke();
+                    if (entries.Length > 1) ClassPickerRequested?.Invoke();
                 };
             }
             return new Entry(choice, card);
@@ -49,15 +48,9 @@ internal sealed class MatrixDeck : ContentView
         Present();
     }
 
-    public void SetNavigationEnabled(bool enabled)
-    {
-        navigationEnabled = enabled;
-        Active?.Card.SetDeckPosition(index, entries.Length, enabled);
-    }
-
     public void Select(int target, int direction = 0)
     {
-        if (!navigationEnabled || target < 0 || target >= entries.Length || target == index) return;
+        if (target < 0 || target >= entries.Length || target == index) return;
         index = target;
         Present(direction);
         SelectionChanged?.Invoke();
@@ -82,7 +75,7 @@ internal sealed class MatrixDeck : ContentView
         front.TranslationX = direction * 25;
         if (Active?.Card is { } card)
         {
-            card.SetDeckPosition(index, entries.Length, navigationEnabled);
+            card.SetDeckPosition(index, entries.Length);
             if (!front.Children.Contains(card))
             {
                 front.Children.Clear();

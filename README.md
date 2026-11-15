@@ -22,23 +22,25 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.4.0
+## Android-Testversion 0.5.0
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-Deinstalliere beim Wechsel von 0.3.0 oder älter einmalig die alte Testversion und wähle die Klassen nach der Installation erneut aus. Ab 0.4.0 verwendet die APK einen eigenen Signierschlüssel.
+Installiere 0.5.0 als Update über 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
 
 **Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Melde dich mit deinem Schulkonto an und tippe danach bei Bedarf auf **Weiter**, um die Klassenliste zu laden.
 
-Über **⋮** wechselst du zwischen **Startseite**, **Meine Klassen** und **Tagesmatrix**. Unter **Klassen auswählen** legst du die beiden Klassenlisten getrennt fest. Auf der Startseite und unter **Meine Klassen** liegt jeweils eine Klassenmatrix oben auf dem Stapel. Wische über den Klassennamen nach links oder rechts oder tippe auf die Pfeile, um die Klasse zu wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste. Über **WebUntis-Konto** kannst du die Klassenliste aktualisieren und dich abmelden.
+Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Frühere Auswahlen für Startseite und Meine Klassen werden zusammengeführt. Unter **⋮ → Klassen auswählen** stehen **Meine Klassen** und **Klassenlehrer** nebeneinander. Setzt du **Klassenlehrer**, ist die Klasse automatisch ausgewählt und steht vor den anderen Klassen. Wische über den Klassennamen oder verwende die Pfeile zum Wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste.
 
-Die Matrizen öffnen sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und vertikal für weitere Namen. Die Namensspalte und die Datumszeile bleiben sichtbar. Beim Scrollen zu weiteren Namen klappt die App-Überschrift ein. Beim Zurückscrollen erscheint sie wieder. Das Dreipunktmenü bleibt über dem Tabellenbereich erreichbar.
+Die Matrizen öffnen sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und vertikal für weitere Namen. Die Namensspalte und die Datumszeile bleiben sichtbar. Beim Scrollen zu weiteren Namen schiebt sich die App-Überschrift mit Logo und Menü nach oben. Beim Zurückscrollen fährt sie wieder ein.
 
-Tippe für die Tagesdetails auf eine Zelle. Zoome mit zwei Fingern oder über die Prozent-Schaltfläche in der Matrix.
+Tippe für die Tagesdetails auf eine Zelle. Zoome mit zwei Fingern.
 
-Die Startseite und **Meine Klassen** zeigen das aktuelle Schuljahr bis heute. In der **Tagesmatrix** kannst du über **Zeitraum** den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. Die Auswahl gilt auch beim Klassenwechsel. **Schuljahr bis heute** setzt den Zeitraum zurück.
+**Meine Klassen** zeigt das Schuljahr bis zum jüngsten gespeicherten Abruf. In der **Tagesmatrix** kannst du über **Zeitraum** den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. **Schuljahr bis heute** setzt den Zeitraum zurück.
 
-Die Testversion hält die Matrix im Arbeitsspeicher und startet jede App-Sitzung mit einem bereinigten WebView-Profil. Entschuldigungen lassen sich in den Tagesdetails lesen. Die Bearbeitung, ein geschützter Offline-Speicher und das Merken der Anmeldung sind für einen späteren Stand vorgesehen.
+Vollständige Matrizen der gewählten Klassen und die Klassenliste werden mit AES-256-GCM verschlüsselt auf dem Gerät gespeichert. Der Schlüssel liegt im Android Keystore. Beim Öffnen sind die gespeicherten Matrizen auch offline mit Datum und Uhrzeit des Abrufs verfügbar. In einer aktiven WebUntis-Sitzung aktualisiert die geöffnete Stapelansicht ihre Klassen alle fünf Minuten im Hintergrund. Über **↻** kannst du sofort aktualisieren und dich bei Bedarf erneut anmelden. Ein unvollständiger Abruf lässt den letzten vollständigen Stand bestehen.
+
+Die App startet mit einem frischen WebUntis-Anmeldeprofil. **Abmelden** unter **WebUntis-Konto** löscht die lokal gespeicherten Matrizen und die Klassenliste. Entschuldigungen sind in den Tagesdetails lesbar.
 
 ### APK bauen
 
