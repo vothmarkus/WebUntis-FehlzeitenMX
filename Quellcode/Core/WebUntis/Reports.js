@@ -668,7 +668,7 @@ function reportCommand(request) {
             const head = document.head;
             const viewport = head?.querySelector('meta[name="viewport"]') ?? document.createElement("meta");
             viewport.name = "viewport";
-            viewport.content = "width=device-width, initial-scale=1";
+            viewport.content = "width=device-width, initial-scale=1, maximum-scale=4, user-scalable=yes";
             if (!viewport.isConnected) head?.append(viewport);
         }
 
@@ -686,6 +686,8 @@ function reportCommand(request) {
         if (mobile) Object.assign(dialogStyle, { position: "fixed", inset: "0px",
             width: "100%", height: "100%", overflow: "auto" });
         const partStyle = { ...naturalSize, position: "relative", inset: "auto" };
+        const content = mobile ? [...current.children] : [];
+        let fittedWidth = 0;
         if (mobile) {
             fitMobileViewport(current);
             if (frame) fitMobileViewport(frame);
@@ -719,6 +721,7 @@ function reportCommand(request) {
             `);
         }
         page.scrollTo(0, 0);
+        if (mobile) fitFormWidth();
         const size = measure();
         if (!size) return { error: "Die Größe des WebUntis-Entschuldigungsformulars konnte nicht bestimmt werden." };
         if (!mobile) {
@@ -738,6 +741,7 @@ function reportCommand(request) {
         for (const part of parts) observer.observe(part, { attributes: true, attributeFilter: ["style"] });
         observer.observe(current.parentElement, { childList: true });
         const resizeObserver = new page.ResizeObserver(() => {
+            if (mobile) fitFormWidth();
             const size = measure();
             if (!size || (size.width === editor.width && size.height === editor.height)) return;
             if (!mobile) {
@@ -756,6 +760,23 @@ function reportCommand(request) {
         function applyLayout() {
             setLayout(current, dialogStyle);
             for (const part of parts) setLayout(part, partStyle);
+        }
+
+        function fitFormWidth() {
+            const width = current.clientWidth;
+            if (width <= 0 || width === fittedWidth) return;
+            fittedWidth = width;
+            // Resize the contents inside the fixed scroll area. Pinch zoom is independent of this layout width.
+            for (const part of content) setLayout(part, { zoom: "1" });
+            const left = current.getBoundingClientRect().left + current.clientLeft - current.scrollLeft;
+            let extent = current.scrollWidth > width + 1 ? current.scrollWidth : 0;
+            for (const item of current.querySelectorAll('input:not([type="hidden"]),select,textarea,button,' +
+                '[role="combobox"],[role="button"],.dijitDialogTitle,.dijitTextBox,.dijitSelect')) {
+                if (visible(item)) extent = Math.max(extent, item.getBoundingClientRect().right - left);
+            }
+            if (extent <= 0) return;
+            const scale = Math.max(0.65, Math.min(1.35, (width - 16) / extent)).toFixed(3);
+            for (const part of content) setLayout(part, { zoom: scale });
         }
 
         function fitMobileViewport(surface) {

@@ -91,6 +91,17 @@ internal sealed class MobileWebView : IDisposable
 
     public Task<string> EvaluateAsync(string script, CancellationToken token) => EvaluateAsync(reports, script, token);
 
+    public async Task ResetEditorZoomAsync(CancellationToken token)
+    {
+        if (!editing || rendererGone || !WebUntisReports.IsSchoolAddress(Address)) return;
+        var revision = NavigationRevision;
+        var json = await EvaluateAsync("window.visualViewport?.scale ?? 1", token);
+        token.ThrowIfCancellationRequested();
+        if (editing && !rendererGone && NavigationRevision == revision && JsonNode.Parse(json) is JsonValue value &&
+            value.TryGetValue<double>(out var scale) && double.IsFinite(scale) && scale > 0 && Math.Abs(scale - 1) > 0.01)
+            reports.ZoomBy((float)Math.Clamp(1 / scale, 0.01, 100));
+    }
+
     public async Task<bool> TapAsync(double x, double y, CancellationToken token)
     {
         var json = await EvaluateAsync("({width: visualViewport.width, x: visualViewport.offsetLeft, y: visualViewport.offsetTop})", token);

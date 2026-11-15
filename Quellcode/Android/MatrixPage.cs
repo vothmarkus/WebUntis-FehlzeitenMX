@@ -23,6 +23,7 @@ internal sealed class MatrixPage : ContentPage
     private readonly Label browserTitle = MobileStyle.Label("WebUntis-Anmeldung", 14, bold: true);
     private readonly Button browserBack = MobileStyle.Button("‹");
     private readonly Button browserNext = MobileStyle.Button("Weiter", primary: true);
+    private readonly Button browserFit = MobileStyle.Button("↔");
     private readonly Button browserClose = MobileStyle.Button("×");
     private readonly Grid workspace = new() { BackgroundColor = Surface };
     private readonly Grid heading = new() { VerticalOptions = LayoutOptions.Start };
@@ -199,7 +200,7 @@ internal sealed class MatrixPage : ContentPage
 
     private void BuildLogin()
     {
-        browserBack.WidthRequest = browserClose.WidthRequest = 44;
+        browserBack.WidthRequest = browserClose.WidthRequest = browserFit.WidthRequest = 44;
         SemanticProperties.SetDescription(browserBack, "Im Anmeldefenster zurück");
         browserBack.Clicked += (_, _) =>
         {
@@ -207,6 +208,16 @@ internal sealed class MatrixPage : ContentPage
         };
         SemanticProperties.SetDescription(browserNext, "Nach der Anmeldung fortfahren");
         browserNext.Clicked += (_, _) => reports?.ContinueAfterLogin();
+        browserFit.IsVisible = false;
+        browserFit.FontSize = 20;
+        SemanticProperties.SetDescription(browserFit, "Formular an die Bildschirmbreite anpassen");
+        browserFit.Clicked += async (_, _) =>
+        {
+            if (!excuseVisible || browser.Browser is not { } view || transfer is not { } current) return;
+            try { await view.ResetEditorZoomAsync(current.Token); }
+            catch (Exception error) when (error is OperationCanceledException or TimeoutException or ObjectDisposedException
+                or System.Text.Json.JsonException or Java.Lang.Exception) { }
+        };
         SemanticProperties.SetDescription(browserClose, "Anmeldung abbrechen");
         browserClose.Clicked += (_, _) =>
         {
@@ -222,6 +233,8 @@ internal sealed class MatrixPage : ContentPage
         };
         loginAddress.VerticalOptions = LayoutOptions.Center;
         loginAddress.LineBreakMode = LineBreakMode.TailTruncation;
+        browserTitle.MaxLines = 1;
+        browserTitle.LineBreakMode = LineBreakMode.TailTruncation;
         toolbar.Add(browserBack);
         toolbar.Add(new VerticalStackLayout
         {
@@ -229,6 +242,7 @@ internal sealed class MatrixPage : ContentPage
             Children = { browserTitle, loginAddress }
         }, 1);
         toolbar.Add(browserNext, 2);
+        toolbar.Add(browserFit, 2);
         toolbar.Add(browserClose, 3);
         loginLayer.Add(toolbar);
     }
@@ -837,6 +851,7 @@ internal sealed class MatrixPage : ContentPage
         if (locked || !visible && !loginLayer.IsVisible) return;
         browserTitle.Text = visible ? "WebUntis-Entschuldigung" : "WebUntis-Anmeldung";
         browserBack.IsVisible = browserNext.IsVisible = !visible;
+        browserFit.IsVisible = visible;
         SemanticProperties.SetDescription(browserClose, visible ? "Entschuldigungsformular schließen" : "Anmeldung abbrechen");
         ShowBrowser(visible);
     }
