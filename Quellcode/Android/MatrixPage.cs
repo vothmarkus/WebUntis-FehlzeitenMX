@@ -13,9 +13,11 @@ internal sealed class MatrixPage : ContentPage
     private const string ChooseClass = "Wähle eine Klasse.";
     private const string InitialUpdate = "Für diese Klasse liegt noch kein Datenstand vor.";
     private const string HeadingAnimation = "SlideHeading";
+    private static readonly GridLength BrowserToolbarHeight = new(62);
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
     private readonly BrowserSurface browser = new();
-    private readonly Grid loginLayer = new() { IsVisible = false, BackgroundColor = Surface, HeightRequest = 62, VerticalOptions = LayoutOptions.Start };
+    private readonly RowDefinition browserToolbar = new(new GridLength(0));
+    private readonly Grid loginLayer = new() { IsVisible = false, BackgroundColor = Surface };
     private readonly Label loginAddress = MobileStyle.Label(WebUntisReports.Origin, 12, Muted);
     private readonly Label browserTitle = MobileStyle.Label("WebUntis-Anmeldung", 14, bold: true);
     private readonly Button browserBack = MobileStyle.Button("‹");
@@ -88,17 +90,18 @@ internal sealed class MatrixPage : ContentPage
             UpdateControls();
             await OpenDailyMatrixAsync();
         };
-        signIn.Clicked += async (_, _) => await LoadClassesAsync(startWithLogin: true);
+        signIn.Clicked += async (_, _) => await LoadClassesAsync();
         chooseClasses.Clicked += async (_, _) => await ShowClassSettingsAsync();
         refresh.Clicked += async (_, _) => await RefreshVisibleAsync();
         rangeButton.Clicked += async (_, _) => await ShowRangeAsync();
         menu.Clicked += async (_, _) => await ShowMenuAsync();
         cancel.Clicked += (_, _) => CancelTransfer();
 
-        var root = new Grid();
-        root.Add(browser);
+        var root = new Grid { RowDefinitions = { browserToolbar, new(GridLength.Star) } };
+        root.Add(browser, 0, 1);
         browser.InputTransparent = true;
         root.Add(workspace);
+        Grid.SetRowSpan(workspace, 2);
         root.Add(loginLayer);
         BuildWorkspace();
         BuildLogin();
@@ -110,6 +113,7 @@ internal sealed class MatrixPage : ContentPage
             if (args.OldHandler == null) return;
             transfer?.Cancel();
             sessionReady = false;
+            profileReady = false;
             if (browser.Browser is { } previous) previous.LoginAddressChanged -= UpdateLoginAddress;
             reports = null;
         };
@@ -185,7 +189,7 @@ internal sealed class MatrixPage : ContentPage
         {
             if (browser.Browser?.GoBack() != true) CancelTransfer();
         };
-        SemanticProperties.SetDescription(browserNext, "Nach der Anmeldung die Klassenberichte öffnen");
+        SemanticProperties.SetDescription(browserNext, "Nach der Anmeldung fortfahren");
         browserNext.Clicked += (_, _) => reports?.ContinueAfterLogin();
         SemanticProperties.SetDescription(browserClose, "Anmeldung abbrechen");
         browserClose.Clicked += (_, _) =>
@@ -324,7 +328,7 @@ internal sealed class MatrixPage : ContentPage
         {
             var saved = await cache.ReadSessionAsync(token);
             if (saved is { Length: > 0 } && !locked && !menuOpen && !modalOpen)
-                await LoadClassesAsync(startWithLogin: false, background: true, savedSession: saved);
+                await LoadClassesAsync(background: true, savedSession: saved);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception error) when (AndroidMatrixCache.StorageFailure(error))
@@ -348,7 +352,7 @@ internal sealed class MatrixPage : ContentPage
             case 0: await OpenSectionAsync(Section.Classes); break;
             case 1: await OpenSectionAsync(Section.Matrix); break;
             case 2:
-                if (classes.Length == 0) await LoadClassesAsync(startWithLogin: true, refreshView: false);
+                if (classes.Length == 0) await LoadClassesAsync(refreshView: false);
                 await ShowClassSettingsAsync();
                 break;
             case 3: await NoticeAsync("Legende", LegendText); break;
@@ -421,12 +425,12 @@ internal sealed class MatrixPage : ContentPage
         finally { menuOpen = false; }
     }
 
-    private async Task LoadClassesAsync(bool startWithLogin, bool refreshView = true, bool force = false,
+    private async Task LoadClassesAsync(bool refreshView = true, bool force = false,
         bool background = false, SavedWebUntisCookie[]? savedSession = null)
     {
         var opened = await RunAsync(async (service, progress, token) =>
         {
-            var (available, year) = await service.ClassesAsync(progress, token, startWithLogin, allowSignIn: !background);
+            var (available, year) = await service.ClassesAsync(progress, token, allowSignIn: !background);
             token.ThrowIfCancellationRequested();
             if (schoolYear != year)
             {
@@ -501,7 +505,7 @@ internal sealed class MatrixPage : ContentPage
     {
         if (!sessionReady)
         {
-            await LoadClassesAsync(startWithLogin: true, force: true);
+            await LoadClassesAsync(force: true);
             return;
         }
         if (section == Section.Classes) await RefreshDeckAsync(force: true);
@@ -657,13 +661,24 @@ internal sealed class MatrixPage : ContentPage
             if (!profileReady)
             {
                 await MobileWebView.ResetProfileAsync();
-                cancellation.Token.ThrowIfCancellationRequested();
-                if (savedSession != null && !await MobileWebView.RestoreSessionAsync(savedSession, cancellation.Token))
+                var token = cancellation.Token;
+                token.ThrowIfCancellationRequested();
+                if (savedSession == null)
+                {
+                    // This also covers a foreground action that replaced the startup refresh.
+                    try { savedSession = await cache.ReadSessionAsync(token); }
+                    catch (Exception error) when (AndroidMatrixCache.StorageFailure(error)) { }
+                }
+                if (savedSession is { Length: > 0 } && !await MobileWebView.RestoreSessionAsync(savedSession, token))
                 {
                     await TryCacheAsync(cache.ForgetSessionAsync);
-                    status.Text = "Die gespeicherte WebUntis-Sitzung ist abgelaufen. Melde dich erneut an.";
-                    return false;
+                    if (background)
+                    {
+                        status.Text = "Die gespeicherte WebUntis-Sitzung ist abgelaufen. Melde dich erneut an.";
+                        return false;
+                    }
                 }
+                token.ThrowIfCancellationRequested();
                 profileReady = true;
             }
             cancellation.Token.ThrowIfCancellationRequested();
@@ -780,22 +795,12 @@ internal sealed class MatrixPage : ContentPage
     private void ShowBrowser(bool visible)
     {
         if (Window == null) return;
+        if (visible && !loginLayer.IsVisible) UpdateLoginAddress(browser.Browser?.LoginAddress);
+        browserToolbar.Height = visible ? BrowserToolbarHeight : new GridLength(0);
+        browser.InputTransparent = !visible;
+        loginLayer.IsVisible = visible;
+        workspace.IsVisible = !visible;
         browser.Browser?.SetLoginVisible(visible);
-        if (visible && !loginLayer.IsVisible)
-        {
-            UpdateLoginAddress(browser.Browser?.LoginAddress);
-            browser.InputTransparent = false;
-            loginLayer.IsVisible = true;
-            workspace.IsVisible = false;
-            browser.Margin = new Thickness(0, 62, 0, 0);
-        }
-        else if (!visible)
-        {
-            workspace.IsVisible = true;
-            browser.InputTransparent = true;
-            loginLayer.IsVisible = false;
-            browser.Margin = Thickness.Zero;
-        }
     }
 
     private void UpdateLoginAddress(string? address)
@@ -808,7 +813,7 @@ internal sealed class MatrixPage : ContentPage
     {
         if (classes.Length == 0)
         {
-            await LoadClassesAsync(startWithLogin: true);
+            await LoadClassesAsync();
             return;
         }
         var connect = sessionReady ? "Klassenliste aktualisieren" : "Bei WebUntis anmelden";
@@ -818,7 +823,7 @@ internal sealed class MatrixPage : ContentPage
         finally { menuOpen = false; }
 
         if (locked) return;
-        if (action == 0) await LoadClassesAsync(startWithLogin: !sessionReady);
+        if (action == 0) await LoadClassesAsync();
         else if (action == 1)
         {
             await RunAsync(async (service, _, _) =>
@@ -850,7 +855,7 @@ internal sealed class MatrixPage : ContentPage
             var prepared = matrix.PreparedAbsences ?? deckCard?.Matrix?.PreparedAbsences;
             var cached = prepared is { Length: > 0 } ? AbsenceActions.ForDay(prepared, person, day) : null;
             var lookupLive = cached is not { Length: > 0 };
-            var rows = lookupLive ? await service.ReadAbsenceActionsAsync(matrix, student, day, progress, token, allowSignIn: true) : cached!;
+            var rows = lookupLive ? await service.ReadAbsenceActionsAsync(matrix, student, day, progress, token) : cached!;
             token.ThrowIfCancellationRequested();
             if (!IsCurrent()) return;
             var choices = AbsenceActions.Available(rows);

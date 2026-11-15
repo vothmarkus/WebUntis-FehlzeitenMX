@@ -55,11 +55,13 @@ function reportCommand(request) {
 
     const loginForm = doc => [...doc.querySelectorAll('input[type="password"]')].some(visible);
     if (request.openBrowserLogin === true &&
-        /willkommen bei webuntis/i.test(clean(document.body?.innerText || document.body?.textContent))) {
+        /willkommen bei web\s*untis/i.test(clean(document.body?.innerText || document.body?.textContent))) {
         const actions = [...document.querySelectorAll('a,button,[role="button"]')].filter(node =>
             visible(node) && clean(node.innerText || node.textContent).toLowerCase() === "im browser öffnen");
-        const target = actions.length === 1 ? pointerTarget(actions[0], "nearest") : null;
-        if (target) return { stage: "login", browserLoginX: target.x, browserLoginY: target.y };
+        if (actions.length === 1) {
+            const target = pointerTarget(actions[0], "nearest");
+            return { stage: "browserWelcome", browserLoginX: target?.x, browserLoginY: target?.y };
+        }
     }
     const globalYears = [...document.querySelectorAll('.global-school-year-selection-container .ant-select-selector')];
     const yearLabel = node => /^(\d{4})\s*\/\s*\d{4}$/.exec(clean(node?.getAttribute('title') || node?.textContent))?.[1];
@@ -617,8 +619,14 @@ function reportCommand(request) {
         const naturalSize = { width: "auto", height: "auto", "min-width": "0px", "min-height": "0px",
             "max-width": "none", "max-height": "none", overflow: "visible" };
         const dialogStyle = { ...naturalSize, position: "absolute", inset: "0px auto auto 0px",
-            width: mobile ? "100%" : "max-content", margin: "0px", "box-sizing": "border-box", "box-shadow": "none" };
+            width: "max-content", margin: "0px", "box-sizing": "border-box", "box-shadow": "none" };
+        if (mobile) Object.assign(dialogStyle, { position: "fixed", inset: "0px",
+            width: "100%", height: "100%", overflow: "auto" });
         const partStyle = { ...naturalSize, position: "relative", inset: "auto" };
+        if (mobile) {
+            fitMobileViewport(current);
+            if (frame) fitMobileViewport(frame);
+        }
         applyLayout();
 
         addLayout(doc, `
@@ -633,7 +641,7 @@ function reportCommand(request) {
             layer.setAttribute("data-fehlzeiten-mx-excuse-background", "");
         }
 
-        if (frame) {
+        if (frame && !mobile) {
             frame.setAttribute("data-fehlzeiten-mx-excuse-frame", "");
             addLayout(frame.ownerDocument, `
                 html, body { overflow: hidden !important; }
@@ -685,6 +693,32 @@ function reportCommand(request) {
         function applyLayout() {
             setLayout(current, dialogStyle);
             for (const part of parts) setLayout(part, partStyle);
+        }
+
+        function fitMobileViewport(surface) {
+            // The embedded page and the Dijit dialog can both sit inside fixed-height clipping parents.
+            const owner = surface.ownerDocument;
+            for (let parent = surface.parentElement; parent; parent = parent.parentElement) {
+                parent.setAttribute("data-fehlzeiten-mx-excuse-ancestor", "");
+            }
+            surface.setAttribute("data-fehlzeiten-mx-excuse-surface", "");
+            addLayout(owner, `
+                [data-fehlzeiten-mx-excuse-ancestor] {
+                    overflow: visible !important; clip: auto !important; clip-path: none !important;
+                    transform: none !important; translate: none !important; filter: none !important;
+                    perspective: none !important; contain: none !important; will-change: auto !important;
+                }
+                html, body { margin: 0 !important; width: 100% !important; height: 100% !important; }
+                html[data-fehlzeiten-mx-excuse-ancestor] { overflow: hidden !important; }
+                iframe[data-fehlzeiten-mx-excuse-surface] {
+                    display: block !important; position: fixed !important; inset: 0 !important;
+                    width: 100% !important; height: 100% !important;
+                    min-width: 0 !important; min-height: 0 !important;
+                    max-width: none !important; max-height: none !important;
+                    margin: 0 !important; padding: 0 !important; border: 0 !important;
+                    box-sizing: border-box !important; z-index: 2147483647 !important;
+                }
+            `);
         }
 
         function setLayout(element, rules) {

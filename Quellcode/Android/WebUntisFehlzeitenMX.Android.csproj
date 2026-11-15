@@ -11,8 +11,8 @@
     <RootNamespace>WebUntisAuswertung.Mobile</RootNamespace>
     <ApplicationTitle>WebUntis-FehlzeitenMX</ApplicationTitle>
     <ApplicationId>de.markusvoth.webuntisfehlzeitenmx</ApplicationId>
-    <ApplicationDisplayVersion>0.6.0</ApplicationDisplayVersion>
-    <ApplicationVersion>7</ApplicationVersion>
+    <ApplicationDisplayVersion>0.6.1</ApplicationDisplayVersion>
+    <ApplicationVersion>8</ApplicationVersion>
     <AndroidPackageFormats>apk</AndroidPackageFormats>
     <AndroidAbi Condition="'$(AndroidAbi)' == ''">android-arm64</AndroidAbi>
     <RuntimeIdentifier>$(AndroidAbi)</RuntimeIdentifier>

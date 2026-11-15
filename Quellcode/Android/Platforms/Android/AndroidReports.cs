@@ -23,11 +23,11 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
     private Student? currentClass;
 
     public async Task<(Student[] Classes, ReportRange SchoolYear)> ClassesAsync(IProgress<string> progress, CancellationToken token,
-        bool startWithLogin, bool allowSignIn = true)
+        bool allowSignIn = true)
     {
         try
         {
-            var state = await OpenReportsAsync(progress, token, includeClasses: true, startWithLogin: startWithLogin, allowSignIn: allowSignIn);
+            var state = await OpenReportsAsync(progress, token, includeClasses: true, allowSignIn: allowSignIn);
             var current = SchoolYears.StartYear(DateOnly.FromDateTime(DateTime.Today));
             if (state.GlobalYear is { } shown && shown != current.ToString(CultureInfo.InvariantCulture))
             {
@@ -117,7 +117,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
             token.ThrowIfCancellationRequested();
             if (view.RendererGone)
                 throw new InvalidOperationException("Android WebView wurde beendet. Starte die App erneut.");
-            var state = await ReadReportPageAsync(includeClasses, waitingForLogin && !browserPromptHandled, token);
+            var state = await ReadReportPageAsync(includeClasses, !browserPromptHandled, token);
             if (state?.Stage == "reports" && !view.Navigating)
             {
                 showLogin(false);
@@ -129,18 +129,21 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
                 throw new InvalidOperationException(waitingForLogin ? "Die WebUntis-Anmeldeseite ist derzeit nicht erreichbar."
                     : "Die WebUntis-Berichte sind derzeit nicht erreichbar.");
 
-            if (waitingForLogin)
+            if (!view.Navigating && state is { Stage: "browserWelcome", BrowserLoginX: { } x, BrowserLoginY: { } y })
             {
-                if (!view.Navigating && state is { BrowserLoginX: { } x, BrowserLoginY: { } y })
+                try
                 {
-                    browserPromptHandled = true;
-                    try
+                    if (await view.TapAsync(x, y, token))
                     {
-                        if (await view.TapAsync(x, y, token)) continueRequested = false;
+                        browserPromptHandled = true;
+                        continueRequested = false;
                     }
-                    catch (TimeoutException) { }
                 }
-                else if (!view.Navigating && (continueRequested || state is { Stage: "signedIn", AtReports: false }))
+                catch (TimeoutException) { }
+            }
+            else if (waitingForLogin)
+            {
+                if (!view.Navigating && (continueRequested || state is { Stage: "signedIn", AtReports: false }))
                 {
                     waitingForLogin = false;
                     OpenReportPage();

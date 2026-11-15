@@ -30,22 +30,28 @@ internal sealed partial class AndroidReports
     }
 
     public async Task<AbsenceListEntry[]> ReadAbsenceActionsAsync(AttendanceMatrix matrix, Student student, DateOnly day,
-        IProgress<string> progress, CancellationToken token, bool allowSignIn)
+        IProgress<string> progress, CancellationToken token)
     {
         var person = AbsenceActions.RequirePerson(matrix, student);
-        await PrepareAbsencePageAsync(matrix, progress, token, allowSignIn);
-        progress.Report("Passende WebUntis-Abwesenheiten werden gesucht …");
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(ExcuseTimeout);
-        try
+        try { return await LookupAsync(startWithLogin: false); }
+        catch (WebUntisSignInRequiredException) { return await LookupAsync(startWithLogin: true); }
+
+        async Task<AbsenceListEntry[]> LookupAsync(bool startWithLogin)
         {
-            var state = await WaitForAbsencesAsync(matrix.ClassName, new ReportSelection(matrix.ClassId, day, day),
-                deadline.Token, person, day);
-            return state.EditableAbsences;
-        }
-        catch (OperationCanceledException) when (!token.IsCancellationRequested)
-        {
-            throw new TimeoutException("WebUntis hat die Abwesenheitsliste nicht bestätigt. Versuche es erneut.");
+            await PrepareAbsencePageAsync(matrix, progress, token, startWithLogin);
+            progress.Report("Passende WebUntis-Abwesenheiten werden gesucht …");
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(ExcuseTimeout);
+            try
+            {
+                var state = await WaitForAbsencesAsync(matrix.ClassName, new ReportSelection(matrix.ClassId, day, day),
+                    deadline.Token, person, day);
+                return state.EditableAbsences;
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                throw new TimeoutException("WebUntis hat die Abwesenheitsliste nicht bestätigt. Versuche es erneut.");
+            }
         }
     }
 
@@ -55,18 +61,51 @@ internal sealed partial class AndroidReports
     {
         var person = AbsenceActions.RequirePerson(matrix, student);
         var selection = new ReportSelection(matrix.ClassId, day, day);
-        if (!reuseList || view.Navigating || !IsPage(Absences))
-            await PrepareAbsencePageAsync(matrix, progress, token, allowSignIn: true);
-        progress.Report("Entschuldigungsformular in WebUntis wird geöffnet …");
         var editorId = Guid.NewGuid().ToString("N");
         var year = SchoolYears.StartYear(day);
-        var saved = false;
+        var refresh = false;
         var closed = false;
         closeExcuse = false;
-        view.SetEditing(true);
         view.EditorMessage += OnEditorMessage;
         try
         {
+            // Recover sign-in while opening the form, before the teacher can enter or save anything.
+            try { await OpenEditorAsync(startWithLogin: false); }
+            catch (WebUntisSignInRequiredException) { await OpenEditorAsync(startWithLogin: true); }
+
+            if (!closed)
+            {
+                view.SetEditing(true);
+                showExcuse(true);
+            }
+            while (!closed && !closeExcuse)
+            {
+                var form = await ReadEditorAsync(token);
+                if (!closed && !form.AbsenceEditorVisible && !view.Navigating)
+                {
+                    // A document replacement can outlive the old WebView's close signal.
+                    refresh = true;
+                    break;
+                }
+                if (!closed && !closeExcuse) await Task.Delay(220, token);
+            }
+            token.ThrowIfCancellationRequested();
+            return refresh;
+        }
+        finally
+        {
+            view.EditorMessage -= OnEditorMessage;
+            showExcuse(false);
+            view.SetEditing(false);
+            if (!view.RendererGone && !token.IsCancellationRequested) view.Go("about:blank");
+            reload = true;
+        }
+
+        async Task OpenEditorAsync(bool startWithLogin)
+        {
+            if (startWithLogin || !reuseList || view.Navigating || !IsPage(Absences))
+                await PrepareAbsencePageAsync(matrix, progress, token, startWithLogin);
+            progress.Report("Entschuldigungsformular in WebUntis wird geöffnet …");
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(ExcuseTimeout);
             try
@@ -76,50 +115,25 @@ internal sealed partial class AndroidReports
                     throw new InvalidOperationException("WebUntis hat das Entschuldigungsformular nicht geöffnet.");
                 while (!closed)
                 {
-                    var form = await ReadEditorAsync();
-                    if (form.AbsenceEditorVisible) break;
+                    var form = await ReadEditorAsync(deadline.Token);
+                    if (form.AbsenceEditorVisible) return;
                     await Task.Delay(200, deadline.Token);
-                }
-                deadline.CancelAfter(Timeout.InfiniteTimeSpan);
-                if (!closed) showExcuse(true);
-                while (!closed && !closeExcuse)
-                {
-                    var form = await ReadEditorAsync();
-                    if (!closed && !form.AbsenceEditorVisible && !view.Navigating)
-                    {
-                        // A document replacement can outlive the old WebView's close signal.
-                        // Re-read the reports in that case as well.
-                        saved = true;
-                        break;
-                    }
-                    if (!closed && !closeExcuse) await Task.Delay(220, token);
                 }
             }
             catch (OperationCanceledException) when (!token.IsCancellationRequested)
             {
                 throw new TimeoutException("WebUntis hat das Entschuldigungsformular nicht rechtzeitig angezeigt.");
             }
-            token.ThrowIfCancellationRequested();
-            return saved;
-
-            async Task<ReportState> ReadEditorAsync()
-            {
-                if (view.Navigating) return new ReportState();
-                if (closed) return new ReportState();
-                var state = await CommandAsync("excuseState", deadline.Token, year: year, editorId: editorId);
-                saved |= state.AbsenceEditorSaveRequested;
-                closed |= state.AbsenceEditorClosed;
-                if (!closed && !saved) CheckAbsencePage(state);
-                return state;
-            }
         }
-        finally
+
+        async Task<ReportState> ReadEditorAsync(CancellationToken readingToken)
         {
-            view.EditorMessage -= OnEditorMessage;
-            showExcuse(false);
-            if (!view.RendererGone && !token.IsCancellationRequested) view.Go("about:blank");
-            view.SetEditing(false);
-            reload = true;
+            if (view.Navigating || closed) return new ReportState();
+            var state = await CommandAsync("excuseState", readingToken, year: year, editorId: editorId);
+            refresh |= state.AbsenceEditorSaveRequested;
+            closed |= state.AbsenceEditorClosed;
+            if (!closed && !refresh) CheckAbsencePage(state);
+            return state;
         }
 
         void OnEditorMessage(string json)
@@ -128,20 +142,20 @@ internal sealed partial class AndroidReports
             try { message = JsonSerializer.Deserialize<EditorMessage>(json, Json); }
             catch (JsonException) { return; }
             if (message?.EditorId != editorId || message.Action is not ("save" or "closed")) return;
-            saved |= message.SaveRequested;
+            refresh |= message.SaveRequested;
             closed |= message.Action == "closed";
         }
     }
 
     private async Task PrepareAbsencePageAsync(AttendanceMatrix matrix, IProgress<string> progress, CancellationToken token,
-        bool allowSignIn)
+        bool startWithLogin)
     {
         var year = SchoolYears.StartYear(matrix.From);
-        var state = await OpenReportsAsync(progress, token, allowSignIn: allowSignIn);
+        var state = await OpenReportsAsync(progress, token, startWithLogin: startWithLogin);
         if (state.GlobalYear != year.ToString(CultureInfo.InvariantCulture))
         {
             await SelectYearAsync(year, token);
-            await OpenReportsAsync(progress, token, allowSignIn: allowSignIn);
+            await OpenReportsAsync(progress, token);
         }
         reload = true;
         view.Go(Absences);
