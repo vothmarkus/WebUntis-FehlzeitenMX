@@ -7,17 +7,15 @@ namespace WebUntisAuswertung.Mobile;
 internal sealed class MatrixCanvas : GraphicsView, IDrawable
 {
     private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
-    private readonly bool scrollRowsWithPage;
     private float zoom = 1;
-    private float width, height, horizontal, vertical, startX, startY;
+    private float width, height, horizontal, vertical, startX, startY, panX, panY;
     private AttendanceMatrix? matrix;
     private bool atNewest;
     private bool pinching;
     private (string Id, DateOnly Day)? selected;
 
-    public MatrixCanvas(bool scrollRowsWithPage)
+    public MatrixCanvas()
     {
-        this.scrollRowsWithPage = scrollRowsWithPage;
         Drawable = this;
         BackgroundColor = Colors.White;
         SemanticProperties.SetDescription(this, "Tagesmatrix. Wische für weitere Tage und Namen. Zoome mit zwei Fingern und tippe für Tagesdetails.");
@@ -30,15 +28,23 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
                 case GestureStatus.Started:
                     startX = horizontal;
                     startY = vertical;
+                    panX = panY = 0;
                     break;
                 case GestureStatus.Running:
-                    horizontal = Math.Clamp(startX - (float)args.TotalX, 0, MaxX);
-                    if (!scrollRowsWithPage) vertical = Math.Clamp(startY - (float)args.TotalY, 0, MaxY);
+                    panX = (float)args.TotalX;
+                    panY = (float)args.TotalY;
+                    horizontal = Math.Clamp(startX - panX, 0, MaxX);
+                    vertical = Math.Clamp(startY - panY, 0, MaxY);
                     Invalidate();
                     break;
                 case GestureStatus.Completed:
                 case GestureStatus.Canceled:
                     atNewest = MaxX - horizontal < 1;
+                    if (args.StatusType == GestureStatus.Completed && Math.Abs(panY) > Math.Abs(panX))
+                    {
+                        var distance = panY > 0 ? -panY : vertical - startY;
+                        if (distance != 0) VerticalScrolled?.Invoke(distance, vertical < 1);
+                    }
                     break;
             }
         };
@@ -51,6 +57,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         pinch.PinchUpdated += (_, args) =>
         {
             pinching = args.Status is GestureStatus.Started or GestureStatus.Running;
+            if (args.Status == GestureStatus.Started) panX = panY = 0;
             if (args.Status == GestureStatus.Running)
                 SetZoom(zoom * (float)args.Scale, args.ScaleOrigin);
         };
@@ -70,12 +77,13 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
 
     public event Action<Student, DateOnly, DayCell>? DaySelected;
     public event Action<float>? ZoomChanged;
-    private float Heading => scrollRowsWithPage ? 50 * zoom : Math.Min(50 * zoom, Math.Max(24, height - 24));
+    public event Action<float, bool>? VerticalScrolled;
+    private float Heading => Math.Min(50 * zoom, Math.Max(24, height - 24));
     private float Row => 40 * zoom;
     private float Column => 49 * zoom;
     private float NameWidth => Math.Min(width * 0.52f, Math.Clamp(width * 0.4f, 103 * zoom, 192 * zoom));
     private float MaxX => Math.Max(0, (matrix?.Days.Length ?? 0) * Column - Math.Max(0, width - NameWidth));
-    private float MaxY => scrollRowsWithPage ? 0 : Math.Max(0, (matrix?.Students.Length ?? 0) * Row - Math.Max(0, height - Heading));
+    private float MaxY => Math.Max(0, (matrix?.Students.Length ?? 0) * Row - Math.Max(0, height - Heading));
 
     public void SetZoom(float value) => SetZoom(value, new Point(0.5, 0.5));
 
@@ -92,7 +100,6 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         horizontal = Math.Clamp(day * Column - Math.Max(0, focusX - NameWidth), 0, MaxX);
         vertical = Math.Clamp(student * Row - Math.Max(0, focusY - Heading), 0, MaxY);
         atNewest = MaxX - horizontal < 1;
-        UpdateHeight();
         Invalidate();
         ZoomChanged?.Invoke(zoom);
     }
@@ -100,7 +107,6 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     public void SetMatrix(AttendanceMatrix? value, bool retainOffsets)
     {
         matrix = value;
-        UpdateHeight();
         if (!retainOffsets)
         {
             selected = null;
@@ -110,11 +116,6 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         horizontal = atNewest ? MaxX : Math.Clamp(horizontal, 0, MaxX);
         vertical = Math.Clamp(vertical, 0, MaxY);
         Invalidate();
-    }
-
-    private void UpdateHeight()
-    {
-        if (scrollRowsWithPage) HeightRequest = Heading + (matrix?.Students.Length ?? 0) * Row;
     }
 
     private void Select(Point position)
