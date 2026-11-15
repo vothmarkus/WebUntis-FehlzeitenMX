@@ -13,6 +13,7 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class MobileWebView : IDisposable
 {
+    private static readonly int[] EditorFitDelays = [0, 140, 320];
     private readonly FrameLayout host;
     private readonly BrowserClient client;
     private readonly BrowserChrome chrome;
@@ -94,29 +95,58 @@ internal sealed class MobileWebView : IDisposable
 
     public Task<string> EvaluateAsync(string script, CancellationToken token) => EvaluateAsync(reports, script, token);
 
-    public async Task ResetEditorZoomAsync(CancellationToken token)
+    public async Task FitEditorOnOpenAsync(CancellationToken token)
     {
         if (!editing || disposed || rendererGone || !WebUntisReports.IsSchoolAddress(Address)) return;
         var revision = NavigationRevision;
+        var touched = false;
         const string fit = """
             (() => {
-                const dialog = document.documentElement.fehlzeitenMxAbsenceEditor?.dialog;
-                if (!dialog?.isConnected || !window.visualViewport) return null;
-                return window.visualViewport.width / dialog.getBoundingClientRect().width;
+                const editor = document.documentElement.fehlzeitenMxAbsenceEditor;
+                if (editor?.closed || !editor?.dialog?.isConnected || !window.visualViewport) return null;
+                return window.visualViewport.width / editor.dialog.getBoundingClientRect().width;
             })()
             """;
+        using var startup = CancellationTokenSource.CreateLinkedTokenSource(token);
+        startup.CancelAfter(TimeSpan.FromSeconds(1));
+        var startupToken = startup.Token;
+        reports.Touch += OnTouch;
         try
         {
-            var json = await EvaluateAsync(fit, token);
-            token.ThrowIfCancellationRequested();
-            // Match the visible viewport to the laid-out form width, even when WebView retained a different page scale.
-            if (editing && !disposed && !rendererGone && NavigationRevision == revision &&
-                JsonNode.Parse(json) is JsonValue value && value.TryGetValue<double>(out var factor) &&
-                double.IsFinite(factor) && factor > 0 && Math.Abs(factor - 1) > 0.01)
-                reports.ZoomBy((float)Math.Clamp(factor, 0.01, 100));
+            // Wait through the first layout pass after the editor toolbar has resized the WebView.
+            var layout = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            reports.PostOnAnimation(() =>
+            {
+                if (CanFit()) reports.PostOnAnimation(() => layout.TrySetResult());
+                else layout.TrySetResult();
+            });
+            await Task.WhenAny(layout.Task, Task.Delay(120, startupToken));
+
+            // WebView can apply the new viewport scale after the first layout. Recheck during opening only.
+            foreach (var delay in EditorFitDelays)
+            {
+                if (!CanFit()) return;
+                await Task.Delay(delay, startupToken);
+                if (!CanFit()) return;
+                var json = await EvaluateAsync(fit, startupToken);
+                if (!CanFit()) return;
+                if (JsonNode.Parse(json) is JsonValue value && value.TryGetValue<double>(out var factor) &&
+                    double.IsFinite(factor) && factor > 0 && Math.Abs(factor - 1) > 0.01)
+                    reports.ZoomBy((float)Math.Clamp(factor, 0.01, 100));
+            }
         }
-        catch (Exception error) when (error is TimeoutException or ObjectDisposedException or
+        catch (Exception error) when (error is OperationCanceledException or TimeoutException or ObjectDisposedException or
             System.Text.Json.JsonException or Java.Lang.Exception) { }
+        finally { if (!disposed) reports.Touch -= OnTouch; }
+
+        bool CanFit() => !startupToken.IsCancellationRequested && !touched && editing && !disposed && !rendererGone &&
+            NavigationRevision == revision;
+
+        void OnTouch(object? sender, global::Android.Views.View.TouchEventArgs args)
+        {
+            touched = true;
+            args.Handled = false;
+        }
     }
 
     public async Task<bool> TapAsync(double x, double y, CancellationToken token)

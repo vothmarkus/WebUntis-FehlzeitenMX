@@ -22,11 +22,11 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.6.6
+## Android-Testversion 0.6.7
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-Installiere 0.6.6 als Update über 0.6.5, 0.6.4, 0.6.3, 0.6.2, 0.6.1, 0.6.0, 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
+Installiere 0.6.7 als Update über 0.6.6, 0.6.5, 0.6.4, 0.6.3, 0.6.2, 0.6.1, 0.6.0, 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
 
 Unter **⋮ → Einstellungen** findest du **Anmeldung**, **Klassenauswahl**, **Legende**, **App-Update** und **Impressum**. **App-Update** sucht beim Öffnen der Einstellungen nach Android-Releases auf GitHub. Wenn eine neuere ARM64-Version verfügbar ist, lädt die App die APK auf Wunsch, prüft sie und öffnet die Android-Installation. Bestätige dort das Update. Android kann beim ersten In-App-Update nach der Installationsfreigabe für Fehlzeiten MX fragen.
 
@@ -38,7 +38,7 @@ Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Früh
 
 Die Matrizen öffnen sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und vertikal für weitere Namen. Die Namensspalte und die Datumszeile bleiben sichtbar. Beim Scrollen zu weiteren Namen schiebt sich die App-Überschrift mit Logo und Menü nach oben. Beim Zurückscrollen fährt sie wieder ein.
 
-Tippe für die Tagesdetails auf eine Zelle. Zoome mit zwei Fingern. In einer als **Klassenlehrer** markierten Klasse öffnest du das Entschuldigungsformular durch langes Drücken auf die Zelle oder über **Entschuldigung bearbeiten** in den Tagesdetails. Gibt es mehrere bearbeitbare Abwesenheiten für diese Person und diesen Tag, kannst du den Eintrag auswählen. Die App hält verfügbare Einträge verschlüsselt vor und bereitet die WebUntis-Abwesenheitsliste für die aktive Klasse im Hintergrund vor. Sie öffnet den ausgewählten Eintrag aus dieser Liste, sobald er online bestätigt ist. Ist die Sitzung abgelaufen, zeigt die App die WebUntis-Anmeldung und öffnet anschließend den ausgewählten Eintrag. Das Formular passt sich beim Öffnen an die Bildschirmbreite an. Zoome mit zwei Fingern oder kehre über **↔** zur angepassten Größe zurück. Im Formular kannst du bis zu **Speichern** oder **Schließen** scrollen. Nach dem Speichern lädt die App die betroffenen Fehlzeiten erneut.
+Tippe für die Tagesdetails auf eine Zelle. Zoome mit zwei Fingern. In einer als **Klassenlehrer** markierten Klasse öffnest du das Entschuldigungsformular durch langes Drücken auf die Zelle oder über **Entschuldigung bearbeiten** in den Tagesdetails. Gibt es mehrere bearbeitbare Abwesenheiten für diese Person und diesen Tag, kannst du den Eintrag auswählen. Die App hält verfügbare Einträge verschlüsselt vor und bereitet die WebUntis-Abwesenheitsliste für die aktive Klasse im Hintergrund vor. Sie öffnet den ausgewählten Eintrag aus dieser Liste, sobald er online bestätigt ist. Ist die Sitzung abgelaufen, zeigt die App die WebUntis-Anmeldung und öffnet anschließend den ausgewählten Eintrag. Das Formular passt sich bei jedem Öffnen automatisch an die Bildschirmbreite an. Zoome bei Bedarf mit zwei Fingern. Im Formular kannst du bis zu **Speichern** oder **Schließen** scrollen. Nach dem Speichern lädt die App die betroffenen Fehlzeiten erneut.
 
 **Meine Klassen** zeigt das Schuljahr bis zum jüngsten gespeicherten Abruf. In der **Tagesmatrix** kannst du über **Zeitraum** den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. **Schuljahr bis heute** setzt den Zeitraum zurück.
 

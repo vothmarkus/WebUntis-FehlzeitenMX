@@ -87,8 +87,8 @@ internal sealed partial class AndroidReports
             if (!closed && !closeExcuse)
             {
                 view.SetEditing(true);
-                await view.ResetEditorZoomAsync(token);
-                if (!closed && !closeExcuse) showExcuse(true);
+                showExcuse(true);
+                _ = view.FitEditorOnOpenAsync(token);
             }
             while (!closed && !closeExcuse)
             {
