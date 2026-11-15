@@ -6,7 +6,7 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class DayDetailPage : ContentPage
 {
-    public DayDetailPage(string name, DateOnly day, DayCell cell, DayDetails detail)
+    public DayDetailPage(string name, DateOnly day, DayCell cell, DayDetails detail, Func<Task>? openExcuse)
     {
         SafeAreaEdges = SafeAreaEdges.All;
         BackgroundColor = Surface;
@@ -16,6 +16,19 @@ internal sealed class DayDetailPage : ContentPage
         var head = new Grid { ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) }, ColumnSpacing = 8 };
         head.Add(new VerticalStackLayout { Spacing = 3, Children = { MobileStyle.Label(name, 21, bold: true), dayLabel } });
         head.Add(close, 1);
+        var header = new VerticalStackLayout { Spacing = 10, Children = { head } };
+        if (openExcuse != null)
+        {
+            var excuse = MobileStyle.Button("Entschuldigung bearbeiten", primary: true);
+            excuse.HorizontalOptions = LayoutOptions.Start;
+            excuse.Clicked += async (_, _) =>
+            {
+                if (!excuse.IsEnabled || Navigation.ModalStack.LastOrDefault() != this) return;
+                excuse.IsEnabled = close.IsEnabled = false;
+                if (await Navigation.PopModalAsync(animated: false) == this) await openExcuse();
+            };
+            header.Add(excuse);
+        }
 
         var parts = detail.Title.Split("   ·   ");
         var headline = string.Join(" · ", parts.Skip(2));
@@ -48,7 +61,7 @@ internal sealed class DayDetailPage : ContentPage
             Padding = new Thickness(14, 8, 14, 14),
             RowSpacing = 14
         };
-        layout.Add(head);
+        layout.Add(header);
         layout.Add(new ScrollView { Content = entries }, 0, 1);
         Content = layout;
     }

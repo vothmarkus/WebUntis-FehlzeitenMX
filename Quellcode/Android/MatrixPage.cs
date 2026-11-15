@@ -54,7 +54,9 @@ internal sealed class MatrixPage : ContentPage
     private CancellationTokenSource? transfer;
     private TaskCompletionSource? transferFinished;
     private IDispatcherTimer? refreshTimer;
+    private IDispatcherTimer? absencePreloadTimer;
     private bool backgroundTransfer;
+    private bool preloadingAbsences;
     private bool sessionReady;
     private bool profileReady;
     private bool restoreStarted;
@@ -69,6 +71,7 @@ internal sealed class MatrixPage : ContentPage
     private double headingHeight = 44;
 
     private bool ForegroundTransfer => transfer != null && !backgroundTransfer;
+    private bool VisibleTransfer => transfer != null && !preloadingAbsences;
     private bool ControlsLocked => locked || ForegroundTransfer || restoring || changingSelection;
 
     public MatrixPage()
@@ -78,7 +81,12 @@ internal sealed class MatrixPage : ContentPage
         BackgroundColor = Surface;
         matrixCard = CreateMatrixCard();
         matrixCard.Clear("", ChooseClass);
-        deck.SelectionChanged += ShowHeadingIfNoMatrix;
+        deck.SelectionChanged += () =>
+        {
+            if (preloadingAbsences) transfer?.Cancel();
+            ShowHeadingIfNoMatrix();
+            ScheduleAbsencePreload();
+        };
         deck.ClassPickerRequested += async () => await ShowDeckPickerAsync();
         emptyText.HorizontalTextAlignment = TextAlignment.Center;
         empty = Card(new VerticalStackLayout { Spacing = 12, Children = { emptyText, signIn, chooseClasses } });
@@ -239,7 +247,11 @@ internal sealed class MatrixPage : ContentPage
         base.OnAppearing();
         if (locked) return;
         ResumeRefresh();
-        if (restoreStarted) return;
+        if (restoreStarted)
+        {
+            ScheduleAbsencePreload();
+            return;
+        }
         restoreStarted = true;
         var token = lifetime.Token;
         try
@@ -272,6 +284,7 @@ internal sealed class MatrixPage : ContentPage
     protected override void OnDisappearing()
     {
         refreshTimer?.Stop();
+        absencePreloadTimer?.Stop();
         base.OnDisappearing();
     }
 
@@ -299,6 +312,7 @@ internal sealed class MatrixPage : ContentPage
         Content.IsVisible = false;
         activeDialog?.Dismiss();
         refreshTimer?.Stop();
+        absencePreloadTimer?.Stop();
         var finished = transferFinished?.Task;
         lifetime.Cancel();
         try
@@ -503,6 +517,7 @@ internal sealed class MatrixPage : ContentPage
 
     private async Task RefreshVisibleAsync()
     {
+        if (preloadingAbsences && !await FinishBackgroundTransferAsync()) return;
         if (!sessionReady)
         {
             await LoadClassesAsync(force: true);
@@ -575,8 +590,7 @@ internal sealed class MatrixPage : ContentPage
     private async Task<bool> RememberDeckMatrixAsync(AndroidReports service, Student choice, MatrixCard card,
         AttendanceMatrix matrix, MatrixData data, CancellationToken token)
     {
-        var hasAbsences = classSelection.Teachers.Contains(choice.Id) && data.Reports.Any(report =>
-            report.Kind == ReportKind.Absences && report.Entries.Any(entry => entry.Kind == EntryKind.Absent));
+        var hasAbsences = classSelection.Teachers.Contains(choice.Id) && matrix.Cells.Values.Any(HasExcusableEntries);
         if (hasAbsences && card.Matrix is { } previous && previous.From == matrix.From)
             matrix.PreparedAbsences = previous.PreparedAbsences;
         card.ShowMatrix(matrix);
@@ -608,7 +622,11 @@ internal sealed class MatrixPage : ContentPage
                 "Für diesen Zeitraum liegt kein gespeicherter Stand vor. Tippe oben auf Aktualisieren, um die Daten abzurufen.");
         }
         ShowHeadingIfNoMatrix();
-        if (!sessionReady || !force && !NeedsRefresh(matrixCard.Matrix, range)) return;
+        if (!sessionReady || !force && !NeedsRefresh(matrixCard.Matrix, range))
+        {
+            ScheduleAbsencePreload();
+            return;
+        }
 
         await RunAsync(async (service, progress, token) =>
         {
@@ -643,8 +661,39 @@ internal sealed class MatrixPage : ContentPage
         await OpenDailyMatrixAsync();
     }
 
+    private void ScheduleAbsencePreload()
+    {
+        if (locked || !sessionReady || Window == null) return;
+        if (absencePreloadTimer == null)
+        {
+            absencePreloadTimer = Dispatcher.CreateTimer();
+            absencePreloadTimer.Interval = TimeSpan.FromMilliseconds(400);
+            absencePreloadTimer.IsRepeating = false;
+            absencePreloadTimer.Tick += async (_, _) => await PreloadActiveAbsencesAsync();
+        }
+        absencePreloadTimer.Stop();
+        absencePreloadTimer.Start();
+    }
+
+    private async Task PreloadActiveAbsencesAsync()
+    {
+        if (!sessionReady || ControlsLocked || menuOpen || transfer != null ||
+            (modalOpen && Navigation.ModalStack.LastOrDefault() is not DayDetailPage) ||
+            ActiveCard?.Matrix is not { } matrix || !classSelection.Teachers.Contains(matrix.ClassId) ||
+            reports?.HasPreparedAbsences(matrix) == true || !matrix.Cells.Values.Any(HasExcusableEntries)) return;
+
+        await RunAsync(async (service, _, token) =>
+        {
+            var rows = await service.PrepareAbsencesAsync(new Student(matrix.ClassId, matrix.ClassName),
+                new ReportRange(matrix.From, matrix.To), token);
+            token.ThrowIfCancellationRequested();
+            if (rows != null) matrix.PreparedAbsences = rows;
+        }, background: true, quiet: true);
+        if (!ReferenceEquals(ActiveCard?.Matrix, matrix)) ScheduleAbsencePreload();
+    }
+
     private async Task<bool> RunAsync(Func<AndroidReports, IProgress<string>, CancellationToken, Task> action,
-        bool background = false, SavedWebUntisCookie[]? savedSession = null)
+        bool background = false, SavedWebUntisCookie[]? savedSession = null, bool quiet = false)
     {
         if (locked || transfer != null && (background || !await FinishBackgroundTransferAsync())) return false;
         if (locked || browser.Browser is not { } view) return false;
@@ -653,9 +702,13 @@ internal sealed class MatrixPage : ContentPage
         transfer = cancellation;
         transferFinished = completion;
         backgroundTransfer = background;
-        var progress = new InlineProgress<string>(message => status.Text = message);
-        status.Text = background ? "Klassen werden aktualisiert …" : "WebUntis wird geöffnet …";
-        UpdateControls();
+        preloadingAbsences = quiet;
+        var progress = new InlineProgress<string>(message => { if (!quiet) status.Text = message; });
+        if (!quiet)
+        {
+            status.Text = background ? "Klassen werden aktualisiert …" : "WebUntis wird geöffnet …";
+            UpdateControls();
+        }
         try
         {
             if (!profileReady)
@@ -688,12 +741,12 @@ internal sealed class MatrixPage : ContentPage
                 view.LoginAddressChanged += UpdateLoginAddress;
             }
             await action(reports, progress, cancellation.Token);
-            if (sessionReady) await SaveSessionAsync(cancellation.Token);
+            if (sessionReady && !quiet) await SaveSessionAsync(cancellation.Token);
             return true;
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
-            if (!locked) status.Text = "Abruf abgebrochen";
+            if (!locked && !quiet) status.Text = "Abruf abgebrochen";
         }
         catch (WebUntisSignInRequiredException error)
         {
@@ -704,7 +757,7 @@ internal sealed class MatrixPage : ContentPage
         }
         catch (Exception error)
         {
-            status.Text = background ? "Aktualisierung momentan fehlgeschlagen" : "Abruf fehlgeschlagen";
+            if (!quiet) status.Text = background ? "Aktualisierung momentan fehlgeschlagen" : "Abruf fehlgeschlagen";
             if (!background && !locked)
             {
                 ShowLogin(false);
@@ -716,10 +769,12 @@ internal sealed class MatrixPage : ContentPage
             transfer = null;
             transferFinished = null;
             backgroundTransfer = false;
-            if (!locked && Window != null)
+            preloadingAbsences = false;
+            if (!locked && Window != null && !quiet)
             {
                 ShowLogin(false);
                 UpdateControls();
+                ScheduleAbsencePreload();
             }
             completion.TrySetResult();
         }
@@ -854,8 +909,9 @@ internal sealed class MatrixPage : ContentPage
             var deckCard = deck.Entries.FirstOrDefault(entry => entry.Class.Id == matrix.ClassId)?.Card;
             var prepared = matrix.PreparedAbsences ?? deckCard?.Matrix?.PreparedAbsences;
             var cached = prepared is { Length: > 0 } ? AbsenceActions.ForDay(prepared, person, day) : null;
-            var lookupLive = cached is not { Length: > 0 };
-            var rows = lookupLive ? await service.ReadAbsenceActionsAsync(matrix, student, day, progress, token) : cached!;
+            var live = service.PreparedAbsenceActions(matrix, student, day);
+            var rows = live is { Length: > 0 } ? live : cached is { Length: > 0 } ? cached :
+                await service.ReadAbsenceActionsAsync(matrix, student, day, progress, token);
             token.ThrowIfCancellationRequested();
             if (!IsCurrent()) return;
             var choices = AbsenceActions.Available(rows);
@@ -876,7 +932,7 @@ internal sealed class MatrixPage : ContentPage
             }
             token.ThrowIfCancellationRequested();
             if (index < 0 || !IsCurrent()) return;
-            if (!await service.ShowExcuseAsync(matrix, student, day, choices[index], progress, token, reuseList: lookupLive)) return;
+            if (!await service.ShowExcuseAsync(matrix, student, day, choices[index], progress, token)) return;
 
             matrix.PreparedAbsences = null;
             if (deckCard?.Matrix is { } existing) existing.PreparedAbsences = null;
@@ -903,14 +959,33 @@ internal sealed class MatrixPage : ContentPage
         bool IsCurrent() => ReferenceEquals(card, ActiveCard) && ReferenceEquals(card.Matrix, matrix);
     }
 
+    private static bool HasExcusableEntries(DayCell cell) =>
+        cell.Entries.Any(item => item.Kind is EntryKind.Absent or EntryKind.Late);
+
+    private async Task ShowDayDetailsAsync(MatrixCard card, string studentId, DateOnly day)
+    {
+        if (ControlsLocked || modalOpen || menuOpen || !ReferenceEquals(card, ActiveCard) || card.Matrix is not { } matrix ||
+            matrix.Students.FirstOrDefault(student => student.Id == studentId) is not { } person ||
+            !matrix.Cells.TryGetValue((studentId, day), out var cell)) return;
+
+        var detail = DayDetails.Create(person, day, cell, matrix.SchoolPeriods);
+        var canEdit = classSelection.Teachers.Contains(matrix.ClassId) && HasExcusableEntries(cell);
+        await ShowModalAsync(new DayDetailPage(person.Name, day, cell, detail, canEdit ? OpenFromDetailsAsync : null));
+        if (canEdit) ScheduleAbsencePreload();
+
+        async Task OpenFromDetailsAsync()
+        {
+            if (!ReferenceEquals(card, ActiveCard) || card.Matrix is not { } current || current.ClassId != matrix.ClassId ||
+                current.Students.FirstOrDefault(student => student.Id == studentId) is not { } selected) return;
+            await OpenCellExcuseAsync(card, current, selected, day);
+            await ShowDayDetailsAsync(card, studentId, day);
+        }
+    }
+
     private MatrixCard CreateMatrixCard(bool inDeck = false)
     {
         var card = new MatrixCard(inDeck);
-        card.DaySelected += async (data, student, day, cell) =>
-        {
-            if (ControlsLocked || modalOpen || menuOpen) return;
-            await ShowModalAsync(new DayDetailPage(student.Name, day, cell, DayDetails.Create(student, day, cell, data.SchoolPeriods)));
-        };
+        card.DaySelected += async (_, student, day, _) => await ShowDayDetailsAsync(card, student.Id, day);
         card.AbsenceRequested += async (matrix, student, day, _) => await OpenCellExcuseAsync(card, matrix, student, day);
         card.NotesRequested += async data =>
         {
@@ -984,13 +1059,13 @@ internal sealed class MatrixPage : ContentPage
         chooseClasses.IsVisible = !restoring && hasClasses;
         menu.IsEnabled = signIn.IsEnabled = chooseClasses.IsEnabled = !ControlsLocked;
         refresh.IsVisible = !restoring && CanLoadView();
-        refresh.IsEnabled = !ControlsLocked && transfer == null;
+        refresh.IsEnabled = !ControlsLocked && !VisibleTransfer;
         SemanticProperties.SetDescription(refresh, sessionReady ? "Aktualisieren" : "Zum Aktualisieren bei WebUntis anmelden");
         classPicker.IsVisible = rangeButton.IsVisible = matrixVisible;
         classPicker.IsEnabled = rangeButton.IsEnabled = !ControlsLocked;
         tools.IsVisible = matrixVisible;
-        activity.IsVisible = activity.IsRunning = transfer != null;
-        cancel.IsVisible = cancel.IsEnabled = transfer != null;
+        activity.IsVisible = activity.IsRunning = VisibleTransfer;
+        cancel.IsVisible = cancel.IsEnabled = VisibleTransfer;
         ShowHeadingIfNoMatrix();
         UpdateFooter();
     }
@@ -1044,7 +1119,7 @@ internal sealed class MatrixPage : ContentPage
     private void UpdateFooter()
     {
         var landscape = workspace.Height > 0 && workspace.Width > workspace.Height;
-        footer.IsVisible = ForegroundTransfer || transfer != null && ActiveCard?.Matrix == null ||
+        footer.IsVisible = ForegroundTransfer || VisibleTransfer && ActiveCard?.Matrix == null ||
             (!landscape && !headingCollapsed && !string.IsNullOrWhiteSpace(status.Text));
     }
 

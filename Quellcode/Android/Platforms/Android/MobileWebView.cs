@@ -44,6 +44,7 @@ internal sealed class MobileWebView : IDisposable
     public string? LoginAddress => (loginPopup ?? reports).Url;
     public int MainStatus { get; private set; }
     public bool Navigating { get; private set; }
+    public long NavigationRevision { get; private set; }
     public bool ShowingLogin { get; private set; }
     public bool RendererGone => rendererGone;
     public string UserAgent => reports.Settings.UserAgentString ?? "";
@@ -56,6 +57,7 @@ internal sealed class MobileWebView : IDisposable
         if (rendererGone) throw new InvalidOperationException("Android WebView wurde beendet. Starte die App erneut.");
         MainStatus = 0;
         Navigating = true;
+        NavigationRevision++;
         reports.StopLoading();
         reports.LoadUrl(address);
     }
@@ -265,7 +267,11 @@ internal sealed class MobileWebView : IDisposable
         if (ReferenceEquals(view, reports))
         {
             Navigating = !finished;
-            if (!finished) MainStatus = 0;
+            if (!finished)
+            {
+                MainStatus = 0;
+                NavigationRevision++;
+            }
         }
         if (ReferenceEquals(view, loginPopup ?? reports)) LoginAddressChanged?.Invoke(address);
         if (finished && PendingExport is { } export && export.Windows.Contains(view) && WebUntisReports.IsSchoolAddress(address))
