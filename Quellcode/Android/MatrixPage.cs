@@ -50,7 +50,7 @@ internal sealed class MatrixPage : ContentPage
         {
             if (!updatingClasses && transfer == null) await LoadSelectedAsync();
         };
-        signIn.Clicked += async (_, _) => await LoadClassesAsync();
+        signIn.Clicked += async (_, _) => await LoadClassesAsync(startWithLogin: true);
         refresh.Clicked += async (_, _) => await LoadSelectedAsync();
         rangeButton.Clicked += async (_, _) => await ShowRangeAsync();
         account.Clicked += async (_, _) => await ShowAccountAsync();
@@ -176,13 +176,18 @@ internal sealed class MatrixPage : ContentPage
         {
             if (browser.Browser?.GoBack() != true) CancelTransfer();
         };
-        var close = MobileStyle.Button("Abbrechen");
+        var next = MobileStyle.Button("Weiter", primary: true);
+        SemanticProperties.SetDescription(next, "Nach der Anmeldung die Klassenberichte öffnen");
+        next.Clicked += (_, _) => reports?.ContinueAfterLogin();
+        var close = MobileStyle.Button("×");
+        close.WidthRequest = 44;
+        SemanticProperties.SetDescription(close, "Anmeldung abbrechen");
         close.Clicked += (_, _) => CancelTransfer();
         var toolbar = new Grid
         {
             Padding = new Thickness(8),
             ColumnSpacing = 8,
-            ColumnDefinitions = { new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto) },
+            ColumnDefinitions = { new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto), new(GridLength.Auto) },
             BackgroundColor = Surface
         };
         loginAddress.VerticalOptions = LayoutOptions.Center;
@@ -193,7 +198,8 @@ internal sealed class MatrixPage : ContentPage
             VerticalOptions = LayoutOptions.Center,
             Children = { MobileStyle.Label("WebUntis-Anmeldung", 14, bold: true), loginAddress }
         }, 1);
-        toolbar.Add(close, 2);
+        toolbar.Add(next, 2);
+        toolbar.Add(close, 3);
         loginLayer.Add(toolbar);
     }
 
@@ -209,11 +215,11 @@ internal sealed class MatrixPage : ContentPage
         return true;
     }
 
-    private async Task LoadClassesAsync()
+    private async Task LoadClassesAsync(bool startWithLogin)
     {
         await RunAsync(async (service, progress, token) =>
         {
-            var (available, year) = await service.ClassesAsync(progress, token);
+            var (available, year) = await service.ClassesAsync(progress, token, startWithLogin);
             token.ThrowIfCancellationRequested();
             var prior = classPicker.SelectedItem as Student;
             if (selectedRange is { } saved && (!year.Contains(saved.From) || !year.Contains(saved.To)))
@@ -335,7 +341,7 @@ internal sealed class MatrixPage : ContentPage
     {
         cancel.IsEnabled = false;
         transfer?.Cancel();
-        if (loginLayer.IsVisible) browser.Browser?.Go("about:blank");
+        if (loginLayer.IsVisible && browser.Browser is { RendererGone: false } view) view.Go("about:blank");
         ShowLogin(false);
     }
 
@@ -370,7 +376,7 @@ internal sealed class MatrixPage : ContentPage
     {
         if (transfer != null) return;
         var action = await DisplayActionSheetAsync("WebUntis", "Schließen", "Abmelden", "Klassenliste aktualisieren");
-        if (action == "Klassenliste aktualisieren") await LoadClassesAsync();
+        if (action == "Klassenliste aktualisieren") await LoadClassesAsync(startWithLogin: classes.Length == 0);
         else if (action == "Abmelden")
         {
             if (reports == null) return;

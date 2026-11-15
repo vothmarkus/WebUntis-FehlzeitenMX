@@ -9,17 +9,20 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin) : IReportSupplement
 {
+    private const string LoginPage = Origin + "/WebUntis/?school=bkt";
     private static readonly Uri School = new(Origin);
     private readonly Dictionary<int, SchoolPeriod[]> schoolPeriods = [];
     private readonly SemaphoreSlim supplements = new(1);
     private bool reload = true;
+    private bool continueRequested;
     private Student? currentClass;
 
-    public async Task<(Student[] Classes, ReportRange SchoolYear)> ClassesAsync(IProgress<string> progress, CancellationToken token)
+    public async Task<(Student[] Classes, ReportRange SchoolYear)> ClassesAsync(IProgress<string> progress, CancellationToken token,
+        bool startWithLogin)
     {
         try
         {
-            var state = await OpenReportsAsync(progress, token, includeClasses: true);
+            var state = await OpenReportsAsync(progress, token, includeClasses: true, startWithLogin: startWithLogin);
             var current = SchoolYears.StartYear(DateOnly.FromDateTime(DateTime.Today));
             if (state.GlobalYear is { } shown && shown != current.ToString(CultureInfo.InvariantCulture))
             {
@@ -84,49 +87,91 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
         await view.SignOutAsync();
     }
 
-    private async Task<ReportState> OpenReportsAsync(IProgress<string> progress, CancellationToken token, bool includeClasses = false)
+    public void ContinueAfterLogin() => continueRequested = true;
+
+    private async Task<ReportState> OpenReportsAsync(IProgress<string> progress, CancellationToken token,
+        bool includeClasses = false, bool startWithLogin = false)
     {
-        progress.Report("WebUntis-Berichte werden geöffnet …");
-        if (reload || !IsPage(Address)) view.Go(Address);
         var waiting = Stopwatch.StartNew();
-        var signingIn = false;
+        var waitingForLogin = false;
+        var loginShown = false;
         var redirected = false;
+        continueRequested = false;
+        if (startWithLogin) OpenLogin(navigate: true);
+        else
+        {
+            progress.Report("WebUntis-Berichte werden geöffnet …");
+            if (reload || !IsPage(Address)) view.Go(Address);
+        }
+
         while (true)
         {
-            var state = await CommandAsync("probe", token, includeClasses: includeClasses);
-            if (state.Stage == "reports" && !view.Navigating)
+            token.ThrowIfCancellationRequested();
+            if (view.RendererGone)
+                throw new InvalidOperationException("Android WebView wurde beendet. Starte die App erneut.");
+            var state = await ReadReportPageAsync(includeClasses, token);
+            if (state?.Stage == "reports" && !view.Navigating)
             {
                 showLogin(false);
                 reload = false;
                 return state;
             }
-            if (view.MainStatus == 403 || state.Stage == "denied")
-                throw new InvalidOperationException("WebUntis meldet fehlende Berechtigung für die Klassenbuchberichte.");
-            if (view.MainStatus >= 500)
-                throw new InvalidOperationException("Die WebUntis-Berichte sind derzeit nicht erreichbar.");
-            if (!view.Navigating && (state.Stage is "login" or "external" || view.MainStatus == 401))
+            if (!view.Navigating && view.MainStatus >= 500)
+                throw new InvalidOperationException(waitingForLogin ? "Die WebUntis-Anmeldeseite ist derzeit nicht erreichbar."
+                    : "Die WebUntis-Berichte sind derzeit nicht erreichbar.");
+
+            if (waitingForLogin)
             {
-                if (!signingIn)
+                if (!view.Navigating && (continueRequested || state is { Stage: "signedIn", AtReports: false }))
                 {
-                    showLogin(true);
-                    progress.Report("Melde dich bei WebUntis an.");
-                    signingIn = true;
+                    waitingForLogin = false;
+                    OpenReportPage();
                 }
-                waiting.Restart();
-                redirected = false;
             }
-            if (!view.Navigating && state.Stage == "signedIn" && !state.AtReports && !redirected)
+            else if (!view.Navigating)
             {
-                showLogin(false);
-                progress.Report("Anmeldung erkannt. WebUntis lädt die Berichte …");
-                view.Go(Address);
-                redirected = true;
-                waiting.Restart();
+                if (state?.Stage is "login" or "external" || view.MainStatus == 401)
+                    OpenLogin(navigate: state?.Stage is not ("login" or "external"));
+                else if (view.MainStatus == 403 || state?.Stage == "denied")
+                    throw new InvalidOperationException("WebUntis meldet fehlende Berechtigung für die Klassenbuchberichte.");
+                else if (state is { Stage: "signedIn", AtReports: false } && !redirected)
+                    OpenReportPage();
             }
-            if (waiting.Elapsed > TimeSpan.FromSeconds(28))
-                throw new TimeoutException("WebUntis hat das Berichtsformular nicht geladen. Starte den Abruf erneut.");
+
+            if (!waitingForLogin && waiting.Elapsed > TimeSpan.FromSeconds(28))
+            {
+                if (loginShown)
+                    throw new TimeoutException("WebUntis hat das Berichtsformular nicht geladen. Melde dich erneut an und tippe danach auf Weiter.");
+                OpenLogin(navigate: true);
+            }
             await Task.Delay(240, token);
         }
+
+        void OpenLogin(bool navigate)
+        {
+            waitingForLogin = loginShown = true;
+            continueRequested = false;
+            redirected = false;
+            progress.Report("Melde dich auf der WebUntis-Seite an.");
+            showLogin(true);
+            if (navigate) view.Go(LoginPage);
+        }
+
+        void OpenReportPage()
+        {
+            continueRequested = false;
+            redirected = true;
+            progress.Report("WebUntis-Berichte werden geöffnet …");
+            view.Go(Address);
+            waiting.Restart();
+        }
+    }
+
+    private async Task<ReportState?> ReadReportPageAsync(bool includeClasses, CancellationToken token)
+    {
+        if (view.Navigating) return null;
+        try { return await CommandAsync("probe", token, includeClasses: includeClasses); }
+        catch (TimeoutException) { return null; }
     }
 
     private async Task<ReportRange?> ReadSchoolYearAsync(CancellationToken token)
@@ -503,6 +548,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
             from = selection?.From.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             to = selection?.To.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             kind = kind.ToString(), excusedOnly = selection?.ExcusedOnly == true, includeClasses, roster, exportId, waitForFormStamp,
+            allowLandingAsSignedIn = false,
             targetSchoolYear = year, className, lateOnly = kind == ReportKind.Lateness
         }, Json);
         var command = $"globalThis.{CommandName}?.({request})";

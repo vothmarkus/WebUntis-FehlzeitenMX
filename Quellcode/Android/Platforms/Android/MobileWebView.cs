@@ -36,6 +36,7 @@ internal sealed class MobileWebView : IDisposable
     public int MainStatus { get; private set; }
     public bool Navigating { get; private set; }
     public bool ShowingLogin { get; private set; }
+    public bool RendererGone => rendererGone;
     public string UserAgent => reports.Settings.UserAgentString ?? "";
     public event Action<string?>? LoginAddressChanged;
     public Export? PendingExport { get; set; }

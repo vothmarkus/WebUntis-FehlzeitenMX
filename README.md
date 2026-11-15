@@ -22,9 +22,13 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.2.0
+## Android-Testversion 0.2.1
 
-Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden. Öffne **Bei WebUntis anmelden** und melde dich mit deinem Schulkonto an. Nach dem Laden der Klassenliste wählst du eine Klasse oder Gruppe. Die Matrix öffnet sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und nach oben oder unten für weitere Namen. Ein Tipp auf eine Tageszelle zeigt die Details. Über **Konto** kannst du die Klassenliste aktualisieren und dich abmelden.
+Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
+
+**Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App. Melde dich dort mit deinem Schulkonto an und tippe danach bei Bedarf auf **Weiter**, um die Klassenliste zu laden. Die App und dein Browser verwenden getrennte Sitzungen.
+
+Nach dem Laden der Klassenliste wählst du eine Klasse oder Gruppe. Die Matrix öffnet sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und nach oben oder unten für weitere Namen. Ein Tipp auf eine Tageszelle zeigt die Details. Über **Konto** kannst du die Klassenliste aktualisieren und dich abmelden.
 
 Standardmäßig lädt die Testversion das aktuelle Schuljahr bis heute. Über **Zeitraum** kannst du den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. Die Auswahl gilt auch beim Klassenwechsel. **Schuljahr bis heute** setzt den Zeitraum zurück.
 

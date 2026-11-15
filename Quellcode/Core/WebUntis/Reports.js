@@ -124,7 +124,7 @@ function reportCommand(request) {
         const atReports = location.pathname.replace(/\/$/, "") === "/class-register-reports" ||
             location.hash.includes("/class-register-reports");
         const classRegister = document.querySelector('a[href="/class-register-overview"],a[href="/class-register-reports"]');
-        const landing = location.pathname === "/" && document.readyState === "complete";
+        const landing = request.allowLandingAsSignedIn !== false && location.pathname === "/" && document.readyState === "complete";
         if (visible(classRegister) || landing) {
             return { stage: "signedIn", atReports, hasFrame: frames.length > 0 };
         }
