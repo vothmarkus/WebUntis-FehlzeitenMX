@@ -11,8 +11,8 @@
     <RootNamespace>WebUntisAuswertung.Mobile</RootNamespace>
     <ApplicationTitle>WebUntis-FehlzeitenMX</ApplicationTitle>
     <ApplicationId>de.markusvoth.webuntisfehlzeitenmx</ApplicationId>
-    <ApplicationDisplayVersion>0.5.0</ApplicationDisplayVersion>
-    <ApplicationVersion>6</ApplicationVersion>
+    <ApplicationDisplayVersion>0.6.0</ApplicationDisplayVersion>
+    <ApplicationVersion>7</ApplicationVersion>
     <AndroidPackageFormats>apk</AndroidPackageFormats>
     <AndroidAbi Condition="'$(AndroidAbi)' == ''">android-arm64</AndroidAbi>
     <RuntimeIdentifier>$(AndroidAbi)</RuntimeIdentifier>
@@ -21,6 +21,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Xamarin.AndroidX.Biometric" Version="1.1.0.30" />
+    <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.14.0.1" />
     <ProjectReference Include="../Core/WebUntisAuswertung.Core.csproj" />
     <MauiIcon Include="Resources/AppIcon/bkt.png" Color="#FFFFFF" />
     <MauiImage Include="Resources/Images/bkt_logo.png" BaseSize="40,40" Resize="true" />

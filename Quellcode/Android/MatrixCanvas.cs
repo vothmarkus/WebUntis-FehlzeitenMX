@@ -12,13 +12,14 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     private AttendanceMatrix? matrix;
     private bool atNewest;
     private bool pinching;
+    private bool held;
     private (string Id, DateOnly Day)? selected;
 
     public MatrixCanvas()
     {
         Drawable = this;
         BackgroundColor = Colors.White;
-        SemanticProperties.SetDescription(this, "Tagesmatrix. Wische für weitere Tage und Namen. Zoome mit zwei Fingern und tippe für Tagesdetails.");
+        SemanticProperties.SetDescription(this, "Tagesmatrix. Tippe für Tagesdetails oder halte ein Feld für Entschuldigungen gedrückt.");
         var pan = new PanGestureRecognizer { TouchPoints = 1 };
         pan.PanUpdated += (_, args) =>
         {
@@ -51,7 +52,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         var tap = new TapGestureRecognizer();
         tap.Tapped += (_, args) =>
         {
-            if (!pinching && args.GetPosition(this) is { } position) Select(position);
+            if (!pinching && !held && args.GetPosition(this) is { } position) Select(position);
         };
         var pinch = new PinchGestureRecognizer();
         pinch.PinchUpdated += (_, args) =>
@@ -76,7 +77,16 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     }
 
     public event Action<Student, DateOnly, DayCell>? DaySelected;
+    public event Action<Student, DateOnly, DayCell>? AbsenceRequested;
     public event Action<float, bool>? VerticalScrolled;
+    internal AttendanceMatrix? CurrentMatrix => matrix;
+
+    internal void BeginPress() => held = false;
+
+    internal void Hold(Point position, AttendanceMatrix original)
+    {
+        if (ReferenceEquals(matrix, original) && !pinching) Select(position, longPress: true);
+    }
     private float Heading => Math.Min(50 * zoom, Math.Max(24, height - 24));
     private float Row => 40 * zoom;
     private float Column => 49 * zoom;
@@ -114,7 +124,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         Invalidate();
     }
 
-    private void Select(Point position)
+    private void Select(Point position, bool longPress = false)
     {
         if (matrix == null || position.X < NameWidth || position.Y < Heading || position.X >= width || position.Y >= height) return;
         var row = (int)((position.Y - Heading + vertical) / Row);
@@ -125,7 +135,12 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         if (!matrix.Cells.TryGetValue((student.Id, day), out var cell)) return;
         selected = (student.Id, day);
         Invalidate();
-        DaySelected?.Invoke(student, day, cell);
+        if (longPress)
+        {
+            held = true;
+            AbsenceRequested?.Invoke(student, day, cell);
+        }
+        else DaySelected?.Invoke(student, day, cell);
     }
 
     public void Draw(ICanvas canvas, RectF dirtyRect)

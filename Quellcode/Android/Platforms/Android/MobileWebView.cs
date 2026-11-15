@@ -3,6 +3,7 @@ using SystemClock = Android.OS.SystemClock;
 using Android.Views;
 using Android.Webkit;
 using Android.Widget;
+using AndroidX.WebKit;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using WebUntisAuswertung.Core;
@@ -18,9 +19,11 @@ internal sealed class MobileWebView : IDisposable
     private readonly Dictionary<NativeWebView, DownloadListener> listeners = [];
     private readonly HashSet<NativeWebView> windows = [];
     private readonly NativeWebView reports;
+    private readonly EditorListener? editorListener;
     private NativeWebView? loginPopup;
     private bool disposed;
     private bool rendererGone;
+    private bool editing;
 
     public MobileWebView(FrameLayout host)
     {
@@ -28,6 +31,12 @@ internal sealed class MobileWebView : IDisposable
         client = new BrowserClient(this);
         chrome = new BrowserChrome(this);
         reports = AddView();
+        if (WebViewFeature.IsFeatureSupported(WebViewFeature.WebMessageListener))
+        {
+            editorListener = new EditorListener(this);
+            WebViewCompat.AddWebMessageListener(reports, "FehlzeitenMxEditor", new HashSet<string> { WebUntisReports.Origin },
+                editorListener);
+        }
         SetLoginVisible(false);
     }
 
@@ -39,6 +48,7 @@ internal sealed class MobileWebView : IDisposable
     public bool RendererGone => rendererGone;
     public string UserAgent => reports.Settings.UserAgentString ?? "";
     public event Action<string?>? LoginAddressChanged;
+    public event Action<string>? EditorMessage;
     public Export? PendingExport { get; set; }
 
     public void Go(string address)
@@ -49,6 +59,8 @@ internal sealed class MobileWebView : IDisposable
         reports.StopLoading();
         reports.LoadUrl(address);
     }
+
+    public void SetEditing(bool value) => editing = value;
 
     public void SetLoginVisible(bool visible)
     {
@@ -108,6 +120,41 @@ internal sealed class MobileWebView : IDisposable
             cookies.Flush();
         }
         WebStorage.Instance?.DeleteAllData();
+    }
+
+    public static SavedWebUntisCookie[] CaptureSession()
+    {
+        var manager = CookieManager.Instance;
+        if (manager == null || !WebViewFeature.IsFeatureSupported(WebViewFeature.GetCookieInfo)) return [];
+        const string root = WebUntisReports.Origin;
+        string[] pages = [root + "/", root + "/WebUntis/", root + "/WebUntis/embedded.do",
+            WebUntisReports.Address, WebUntisReports.Absences, WebUntisReports.AbsenceTimes, WebUntisReports.Timetable];
+        var cookies = new Dictionary<(string, string, string), SavedWebUntisCookie>();
+        var now = DateTimeOffset.UtcNow;
+        foreach (var page in pages)
+            foreach (var header in CookieManagerCompat.GetCookieInfo(manager, page) ?? [])
+                if (SavedWebUntisCookie.Read(header, now) is { } cookie)
+                    cookies[(cookie.Name, cookie.Domain, cookie.Path)] = cookie;
+        return [.. cookies.Values];
+    }
+
+    public static async Task<bool> RestoreSessionAsync(SavedWebUntisCookie[] saved, CancellationToken token)
+    {
+        var manager = CookieManager.Instance;
+        if (manager == null) return false;
+        var now = DateTimeOffset.UtcNow;
+        var accepted = false;
+        // Set shorter paths first so the restored jar keeps all distinct scopes.
+        foreach (var cookie in saved.Select(item => SavedWebUntisCookie.Read(item.Header, now)).OfType<SavedWebUntisCookie>()
+                     .OrderBy(item => item.Path.Length))
+        {
+            token.ThrowIfCancellationRequested();
+            using var result = new JavascriptResult();
+            manager.SetCookie(WebUntisReports.Origin + "/", cookie.Header, result);
+            accepted |= await result.Task.WaitAsync(TimeSpan.FromSeconds(5), token) == "true";
+        }
+        token.ThrowIfCancellationRequested();
+        return accepted;
     }
 
     public async Task SignOutAsync()
@@ -186,6 +233,11 @@ internal sealed class MobileWebView : IDisposable
     {
         if (disposed) return;
         disposed = true;
+        if (editorListener != null)
+        {
+            if (!rendererGone) WebViewCompat.RemoveWebMessageListener(reports, "FehlzeitenMxEditor");
+            editorListener.Dispose();
+        }
         foreach (var popup in windows.ToArray()) RemoveView(popup);
         RemoveView(reports);
         chrome.Dispose();
@@ -205,7 +257,7 @@ internal sealed class MobileWebView : IDisposable
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length != 0)
             return false;
         if (WebUntisReports.IsSchoolAddress(address)) return true;
-        return export == null && (ReferenceEquals(view, reports) || ReferenceEquals(view, loginPopup));
+        return !editing && export == null && (ReferenceEquals(view, reports) || ReferenceEquals(view, loginPopup));
     }
 
     private void OnNavigation(NativeWebView view, string? address, bool finished)
@@ -297,7 +349,7 @@ internal sealed class MobileWebView : IDisposable
         public override bool OnCreateWindow(NativeWebView? view, bool isDialog, bool isUserGesture, Message? resultMsg)
         {
             var export = owner.PendingExport;
-            if (view == null || resultMsg?.Obj is not NativeWebView.WebViewTransport transport || owner.disposed ||
+            if (view == null || resultMsg?.Obj is not NativeWebView.WebViewTransport transport || owner.disposed || owner.editing ||
                 (export == null && (!owner.ShowingLogin || !isUserGesture))) return false;
             if (export == null && owner.loginPopup != null) return false;
             var popup = owner.AddView();
@@ -327,7 +379,7 @@ internal sealed class MobileWebView : IDisposable
 
         public override bool OnJsAlert(NativeWebView? view, string? url, string? message, JsResult? result)
         {
-            if (owner.ShowingLogin) return false;
+            if (owner.ShowingLogin || owner.editing) return false;
             if (owner.PendingExport is { } export && WebUntisReports.IsSchoolAddress(url))
             {
                 if (message != null && !Regex.IsMatch(message, "keine Berechtigung|kein Zugriff|nicht berechtigt", RegexOptions.IgnoreCase) &&
@@ -341,9 +393,20 @@ internal sealed class MobileWebView : IDisposable
 
         public override bool OnJsConfirm(NativeWebView? view, string? url, string? message, JsResult? result)
         {
-            if (owner.ShowingLogin) return false;
+            if (owner.ShowingLogin || owner.editing) return false;
             result?.Cancel();
             return true;
+        }
+    }
+
+    private sealed class EditorListener(MobileWebView owner) : Java.Lang.Object, WebViewCompat.IWebMessageListener
+    {
+        public void OnPostMessage(NativeWebView? view, WebMessageCompat? message, global::Android.Net.Uri? sourceOrigin,
+            bool isMainFrame, JavaScriptReplyProxy? replyProxy)
+        {
+            if (owner.editing && isMainFrame && sourceOrigin?.ToString() == WebUntisReports.Origin &&
+                message?.Type == WebMessageCompat.TypeString && message.Data is { Length: <= 256 } data)
+                owner.EditorMessage?.Invoke(data);
         }
     }
 

@@ -1,6 +1,7 @@
 using Microsoft.Maui.Dispatching;
 using WebUntisAuswertung.Core;
 using static WebUntisAuswertung.Mobile.MobileStyle;
+using NativeDialog = Android.App.AlertDialog;
 
 namespace WebUntisAuswertung.Mobile;
 
@@ -16,6 +17,10 @@ internal sealed class MatrixPage : ContentPage
     private readonly BrowserSurface browser = new();
     private readonly Grid loginLayer = new() { IsVisible = false, BackgroundColor = Surface, HeightRequest = 62, VerticalOptions = LayoutOptions.Start };
     private readonly Label loginAddress = MobileStyle.Label(WebUntisReports.Origin, 12, Muted);
+    private readonly Label browserTitle = MobileStyle.Label("WebUntis-Anmeldung", 14, bold: true);
+    private readonly Button browserBack = MobileStyle.Button("‹");
+    private readonly Button browserNext = MobileStyle.Button("Weiter", primary: true);
+    private readonly Button browserClose = MobileStyle.Button("×");
     private readonly Grid workspace = new() { BackgroundColor = Surface };
     private readonly Grid heading = new() { VerticalOptions = LayoutOptions.Start };
     private readonly Grid headingHost = new() { IsClippedToBounds = true };
@@ -36,6 +41,8 @@ internal sealed class MatrixPage : ContentPage
     private readonly MatrixCard matrixCard;
     private readonly Border empty;
     private readonly AndroidMatrixCache cache = new();
+    private readonly CancellationTokenSource lifetime = new();
+    private NativeDialog? activeDialog;
     private ClassSelection classSelection = ClassSelection.Load();
     private Section section;
     private AndroidReports? reports;
@@ -55,10 +62,12 @@ internal sealed class MatrixPage : ContentPage
     private bool modalOpen;
     private bool menuOpen;
     private bool headingCollapsed;
+    private bool excuseVisible;
+    private bool locked;
     private double headingHeight = 44;
 
     private bool ForegroundTransfer => transfer != null && !backgroundTransfer;
-    private bool ControlsLocked => ForegroundTransfer || restoring || changingSelection;
+    private bool ControlsLocked => locked || ForegroundTransfer || restoring || changingSelection;
 
     public MatrixPage()
     {
@@ -170,20 +179,20 @@ internal sealed class MatrixPage : ContentPage
 
     private void BuildLogin()
     {
-        var back = MobileStyle.Button("‹");
-        back.WidthRequest = 44;
-        SemanticProperties.SetDescription(back, "Im Anmeldefenster zurück");
-        back.Clicked += (_, _) =>
+        browserBack.WidthRequest = browserClose.WidthRequest = 44;
+        SemanticProperties.SetDescription(browserBack, "Im Anmeldefenster zurück");
+        browserBack.Clicked += (_, _) =>
         {
             if (browser.Browser?.GoBack() != true) CancelTransfer();
         };
-        var next = MobileStyle.Button("Weiter", primary: true);
-        SemanticProperties.SetDescription(next, "Nach der Anmeldung die Klassenberichte öffnen");
-        next.Clicked += (_, _) => reports?.ContinueAfterLogin();
-        var close = MobileStyle.Button("×");
-        close.WidthRequest = 44;
-        SemanticProperties.SetDescription(close, "Anmeldung abbrechen");
-        close.Clicked += (_, _) => CancelTransfer();
+        SemanticProperties.SetDescription(browserNext, "Nach der Anmeldung die Klassenberichte öffnen");
+        browserNext.Clicked += (_, _) => reports?.ContinueAfterLogin();
+        SemanticProperties.SetDescription(browserClose, "Anmeldung abbrechen");
+        browserClose.Clicked += (_, _) =>
+        {
+            if (excuseVisible) reports?.CloseExcuse();
+            else CancelTransfer();
+        };
         var toolbar = new Grid
         {
             Padding = new Thickness(8),
@@ -193,19 +202,24 @@ internal sealed class MatrixPage : ContentPage
         };
         loginAddress.VerticalOptions = LayoutOptions.Center;
         loginAddress.LineBreakMode = LineBreakMode.TailTruncation;
-        toolbar.Add(back);
+        toolbar.Add(browserBack);
         toolbar.Add(new VerticalStackLayout
         {
             VerticalOptions = LayoutOptions.Center,
-            Children = { MobileStyle.Label("WebUntis-Anmeldung", 14, bold: true), loginAddress }
+            Children = { browserTitle, loginAddress }
         }, 1);
-        toolbar.Add(next, 2);
-        toolbar.Add(close, 3);
+        toolbar.Add(browserNext, 2);
+        toolbar.Add(browserClose, 3);
         loginLayer.Add(toolbar);
     }
 
     protected override bool OnBackButtonPressed()
     {
+        if (excuseVisible)
+        {
+            reports?.CloseExcuse();
+            return true;
+        }
         if (loginLayer.IsVisible)
         {
             if (browser.Browser?.GoBack() != true) CancelTransfer();
@@ -219,21 +233,26 @@ internal sealed class MatrixPage : ContentPage
     protected override async void OnAppearing()
     {
         base.OnAppearing();
-        ResumeRefresh(refreshNow: false);
+        if (locked) return;
+        ResumeRefresh();
         if (restoreStarted) return;
         restoreStarted = true;
+        var token = lifetime.Token;
         try
         {
-            if (await cache.ReadClassesAsync() is not { } stored) return;
-            schoolYear = stored.SchoolYear;
-            classes = stored.Classes;
-            FillClassPicker();
-            RebuildDeck(firstCard: true);
-            UpdateControls();
-            var loaded = await LoadSavedMatricesAsync(stored.SchoolYear);
-            status.Text = loaded ? "Gespeicherte Daten · zur Aktualisierung anmelden"
-                : "Ein gespeicherter Datenstand konnte nicht geöffnet werden.";
+            if (await cache.ReadClassesAsync(token) is { } stored)
+            {
+                token.ThrowIfCancellationRequested();
+                schoolYear = stored.SchoolYear;
+                classes = stored.Classes;
+                FillClassPicker();
+                RebuildDeck(firstCard: true);
+                UpdateControls();
+                var loaded = await LoadSavedMatricesAsync(stored.SchoolYear, token);
+                status.Text = loaded ? "Gespeicherte Daten" : "Ein gespeicherter Datenstand konnte nicht geöffnet werden.";
+            }
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
         catch (Exception error) when (AndroidMatrixCache.StorageFailure(error))
         {
             status.Text = "Der gespeicherte Klassenstand konnte nicht geöffnet werden.";
@@ -243,6 +262,7 @@ internal sealed class MatrixPage : ContentPage
             restoring = false;
             UpdateControls();
         }
+        await CheckSavedSessionAsync();
     }
 
     protected override void OnDisappearing()
@@ -251,7 +271,7 @@ internal sealed class MatrixPage : ContentPage
         base.OnDisappearing();
     }
 
-    internal void ResumeRefresh(bool refreshNow = true)
+    private void ResumeRefresh()
     {
         if (refreshTimer == null)
         {
@@ -260,39 +280,79 @@ internal sealed class MatrixPage : ContentPage
             refreshTimer.IsRepeating = true;
             refreshTimer.Tick += async (_, _) =>
             {
-                if (section == Section.Classes) await RefreshDeckAsync(force: true);
+                if (section != Section.Classes) return;
+                if (sessionReady) await RefreshDeckAsync(force: true);
+                else await CheckSavedSessionAsync();
             };
         }
         refreshTimer.Start();
-        if (refreshNow && section == Section.Classes) _ = RefreshDeckAsync();
     }
 
-    internal void PauseRefresh()
+    internal async Task SealAsync()
     {
+        if (locked) return;
+        locked = true;
+        Content.IsVisible = false;
+        activeDialog?.Dismiss();
         refreshTimer?.Stop();
-        if (backgroundTransfer) transfer?.Cancel();
+        var finished = transferFinished?.Task;
+        lifetime.Cancel();
+        try
+        {
+            while (Navigation.ModalStack.Count > 0) await Navigation.PopModalAsync(animated: false);
+        }
+        catch (InvalidOperationException) { }
+        if (finished != null) await finished;
+        try
+        {
+            if (browser.Browser is { RendererGone: false } view) await view.SignOutAsync();
+            else await MobileWebView.ResetProfileAsync();
+        }
+        catch (Exception error) when (error is TimeoutException or InvalidOperationException or Java.Lang.Exception) { }
+        finally
+        {
+            browser.Handler?.DisconnectHandler();
+            lifetime.Dispose();
+        }
+    }
+
+    private async Task CheckSavedSessionAsync()
+    {
+        if (ControlsLocked || menuOpen || modalOpen || transfer != null || sessionReady || Window == null) return;
+        var token = lifetime.Token;
+        try
+        {
+            var saved = await cache.ReadSessionAsync(token);
+            if (saved is { Length: > 0 } && !locked && !menuOpen && !modalOpen)
+                await LoadClassesAsync(startWithLogin: false, background: true, savedSession: saved);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error) when (AndroidMatrixCache.StorageFailure(error))
+        {
+            if (!locked) status.Text = "Die gespeicherte WebUntis-Sitzung konnte nicht geöffnet werden.";
+        }
     }
 
     private async Task ShowMenuAsync()
     {
         if (ControlsLocked || menuOpen || modalOpen) return;
-        const string mine = "▤  Meine Klassen", matrix = "▦  Tagesmatrix";
-        const string selection = "☷  Klassen auswählen", legend = "ⓘ  Legende", account = "⚙  WebUntis-Konto";
+        string[] actions = ["▤  Meine Klassen", "▦  Tagesmatrix", "☷  Klassen auswählen", "ⓘ  Legende", "⚙  WebUntis-Konto"];
         menuOpen = true;
-        string? action;
-        try { action = await DisplayActionSheetAsync("Fehlzeiten MX", "Schließen", null, mine, matrix, selection, legend, account); }
+        int action;
+        try { action = await ChooseAsync("Fehlzeiten MX", actions); }
         finally { menuOpen = false; }
 
+        if (locked) return;
         switch (action)
         {
-            case mine: await OpenSectionAsync(Section.Classes); break;
-            case matrix: await OpenSectionAsync(Section.Matrix); break;
-            case selection:
+            case 0: await OpenSectionAsync(Section.Classes); break;
+            case 1: await OpenSectionAsync(Section.Matrix); break;
+            case 2:
                 if (classes.Length == 0) await LoadClassesAsync(startWithLogin: true, refreshView: false);
                 await ShowClassSettingsAsync();
                 break;
-            case legend: await DisplayAlertAsync("Legende", LegendText, "Schließen"); break;
-            case account: await ShowAccountAsync(); break;
+            case 3: await NoticeAsync("Legende", LegendText); break;
+            case 4: await ShowAccountAsync(); break;
         }
     }
 
@@ -322,20 +382,22 @@ internal sealed class MatrixPage : ContentPage
         UpdateControls();
         try
         {
-            if (!await FinishBackgroundTransferAsync()) return;
+            if (!await FinishBackgroundTransferAsync() || locked) return;
             try { selection.Save(); }
             catch (Exception error) when (AndroidMatrixCache.StorageFailure(error) || error is InvalidOperationException)
             {
-                await DisplayAlertAsync("Klassenauswahl", "Die Auswahl konnte nicht gespeichert werden.", "OK");
+                await NoticeAsync("Klassenauswahl", "Die Auswahl konnte nicht gespeichert werden.");
                 return;
             }
             classSelection = selection;
             RebuildDeck(firstCard: true);
             UpdateControls();
-            var pruned = await TryCacheAsync(() => cache.PruneAsync(deck.Entries.Select(item => item.Class.Id)));
-            var loaded = schoolYear is not { } year || await LoadSavedMatricesAsync(year);
+            var token = lifetime.Token;
+            var pruned = await TryCacheAsync(() => cache.PruneAsync(deck.Entries.Select(item => item.Class.Id), token));
+            var loaded = schoolYear is not { } year || await LoadSavedMatricesAsync(year, token);
             if (!pruned || !loaded) status.Text = "Der lokale Datenspeicher konnte nicht vollständig aktualisiert werden.";
         }
+        catch (OperationCanceledException) when (locked) { }
         finally
         {
             changingSelection = false;
@@ -353,18 +415,18 @@ internal sealed class MatrixPage : ContentPage
             var entries = deck.Entries;
             var names = entries.Select(entry => entry.Class.Name).ToArray();
             var labels = names.Select((name, i) => names.Count(other => other == name) == 1 ? name : $"{name} · {i + 1}").ToArray();
-            var choice = await DisplayActionSheetAsync("Klasse öffnen", "Schließen", null, labels);
-            if (ReferenceEquals(entries, deck.Entries))
-                deck.Select(Array.IndexOf(labels, choice));
+            var choice = await ChooseAsync("Klasse öffnen", labels);
+            if (!locked && ReferenceEquals(entries, deck.Entries)) deck.Select(choice);
         }
         finally { menuOpen = false; }
     }
 
-    private async Task LoadClassesAsync(bool startWithLogin, bool refreshView = true, bool force = false)
+    private async Task LoadClassesAsync(bool startWithLogin, bool refreshView = true, bool force = false,
+        bool background = false, SavedWebUntisCookie[]? savedSession = null)
     {
         var opened = await RunAsync(async (service, progress, token) =>
         {
-            var (available, year) = await service.ClassesAsync(progress, token, startWithLogin);
+            var (available, year) = await service.ClassesAsync(progress, token, startWithLogin, allowSignIn: !background);
             token.ThrowIfCancellationRequested();
             if (schoolYear != year)
             {
@@ -384,7 +446,7 @@ internal sealed class MatrixPage : ContentPage
             var loaded = await LoadSavedMatricesAsync(year, token);
             status.Text = savedList && pruned && loaded ? $"{classes.Length} Klassen und Gruppen verfügbar"
                 : "Klassen geöffnet · lokaler Datenspeicher nicht vollständig verfügbar";
-        });
+        }, background, savedSession);
         if (!opened || !refreshView) return;
         if (section == Section.Classes) await RefreshDeckAsync(force);
         else await OpenDailyMatrixAsync(force);
@@ -470,9 +532,8 @@ internal sealed class MatrixPage : ContentPage
                     token.ThrowIfCancellationRequested();
                     if (matrix.HasCompleteReports)
                     {
-                        card.ShowMatrix(matrix);
                         updated++;
-                        if (!await TryCacheAsync(() => cache.SaveMatrixAsync(data, token))) stored = false;
+                        if (!await RememberDeckMatrixAsync(service, choice, card, matrix, data, token)) stored = false;
                     }
                     else
                     {
@@ -506,6 +567,23 @@ internal sealed class MatrixPage : ContentPage
     private static bool NeedsRefresh(AttendanceMatrix? matrix, ReportRange range) =>
         matrix is not { HasCompleteReports: true, FetchedAt: { } fetched } ||
         matrix.From != range.From || matrix.To != range.To || DateTimeOffset.UtcNow - fetched >= RefreshInterval;
+
+    private async Task<bool> RememberDeckMatrixAsync(AndroidReports service, Student choice, MatrixCard card,
+        AttendanceMatrix matrix, MatrixData data, CancellationToken token)
+    {
+        var hasAbsences = classSelection.Teachers.Contains(choice.Id) && data.Reports.Any(report =>
+            report.Kind == ReportKind.Absences && report.Entries.Any(entry => entry.Kind == EntryKind.Absent));
+        if (hasAbsences && card.Matrix is { } previous && previous.From == matrix.From)
+            matrix.PreparedAbsences = previous.PreparedAbsences;
+        card.ShowMatrix(matrix);
+        var stored = await TryCacheAsync(() => cache.SaveMatrixAsync(data with { PreparedAbsences = matrix.PreparedAbsences }, token));
+        if (!hasAbsences) return stored;
+        var prepared = await service.PrepareAbsencesAsync(choice, data.Range, token);
+        token.ThrowIfCancellationRequested();
+        if (prepared == null) return stored;
+        matrix.PreparedAbsences = prepared;
+        return await TryCacheAsync(() => cache.SaveMatrixAsync(data with { PreparedAbsences = prepared }, token));
+    }
 
     private async Task OpenDailyMatrixAsync(bool force = false)
     {
@@ -561,11 +639,12 @@ internal sealed class MatrixPage : ContentPage
         await OpenDailyMatrixAsync();
     }
 
-    private async Task<bool> RunAsync(Func<AndroidReports, IProgress<string>, CancellationToken, Task> action, bool background = false)
+    private async Task<bool> RunAsync(Func<AndroidReports, IProgress<string>, CancellationToken, Task> action,
+        bool background = false, SavedWebUntisCookie[]? savedSession = null)
     {
-        if (transfer != null && (background || !await FinishBackgroundTransferAsync())) return false;
-        if (browser.Browser is not { } view) return false;
-        using var cancellation = new CancellationTokenSource();
+        if (locked || transfer != null && (background || !await FinishBackgroundTransferAsync())) return false;
+        if (locked || browser.Browser is not { } view) return false;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         transfer = cancellation;
         transferFinished = completion;
@@ -578,31 +657,42 @@ internal sealed class MatrixPage : ContentPage
             if (!profileReady)
             {
                 await MobileWebView.ResetProfileAsync();
+                cancellation.Token.ThrowIfCancellationRequested();
+                if (savedSession != null && !await MobileWebView.RestoreSessionAsync(savedSession, cancellation.Token))
+                {
+                    await TryCacheAsync(cache.ForgetSessionAsync);
+                    return false;
+                }
                 profileReady = true;
             }
             cancellation.Token.ThrowIfCancellationRequested();
             if (reports == null)
             {
-                reports = new AndroidReports(view, ShowLogin);
+                reports = new AndroidReports(view, ShowLogin, ShowExcuse, ConfirmSessionAsync);
                 view.LoginAddressChanged += UpdateLoginAddress;
             }
             await action(reports, progress, cancellation.Token);
+            if (sessionReady) await SaveSessionAsync(cancellation.Token);
             return true;
         }
-        catch (OperationCanceledException) { status.Text = "Abruf abgebrochen"; }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            if (!locked) status.Text = "Abruf abgebrochen";
+        }
         catch (WebUntisSignInRequiredException error)
         {
             sessionReady = false;
+            await TryCacheAsync(cache.ForgetSessionAsync);
             status.Text = error.Message;
-            if (!background && Window != null) await DisplayAlertAsync("WebUntis", error.Message, "OK");
+            if (!background && !locked) await NoticeAsync("WebUntis", error.Message);
         }
         catch (Exception error)
         {
             status.Text = background ? "Aktualisierung momentan fehlgeschlagen" : "Abruf fehlgeschlagen";
-            if (!background && Window != null)
+            if (!background && !locked)
             {
                 ShowLogin(false);
-                await DisplayAlertAsync("WebUntis-FehlzeitenMX", error.Message, "OK");
+                await NoticeAsync("WebUntis-FehlzeitenMX", error.Message);
             }
         }
         finally
@@ -610,7 +700,7 @@ internal sealed class MatrixPage : ContentPage
             transfer = null;
             transferFinished = null;
             backgroundTransfer = false;
-            if (Window != null)
+            if (!locked && Window != null)
             {
                 ShowLogin(false);
                 UpdateControls();
@@ -618,6 +708,27 @@ internal sealed class MatrixPage : ContentPage
             completion.TrySetResult();
         }
         return false;
+    }
+
+    private async Task ConfirmSessionAsync(CancellationToken token)
+    {
+        if (sessionReady) return;
+        sessionReady = true;
+        await SaveSessionAsync(token);
+    }
+
+    private async Task SaveSessionAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        try
+        {
+            var cookies = MobileWebView.CaptureSession();
+            if (cookies.Length > 0) await cache.SaveSessionAsync(cookies, token);
+        }
+        catch (Exception error) when (AndroidMatrixCache.StorageFailure(error))
+        {
+            status.Text = "Die WebUntis-Sitzung konnte nicht auf dem Gerät gespeichert werden.";
+        }
     }
 
     private async Task<bool> FinishBackgroundTransferAsync()
@@ -649,6 +760,23 @@ internal sealed class MatrixPage : ContentPage
     }
 
     private void ShowLogin(bool visible)
+    {
+        if (locked || !visible && excuseVisible) return;
+        if (visible) sessionReady = false;
+        ShowBrowser(visible);
+    }
+
+    private void ShowExcuse(bool visible)
+    {
+        excuseVisible = visible;
+        if (locked || !visible && !loginLayer.IsVisible) return;
+        browserTitle.Text = visible ? "WebUntis-Entschuldigung" : "WebUntis-Anmeldung";
+        browserBack.IsVisible = browserNext.IsVisible = !visible;
+        SemanticProperties.SetDescription(browserClose, visible ? "Entschuldigungsformular schließen" : "Anmeldung abbrechen");
+        ShowBrowser(visible);
+    }
+
+    private void ShowBrowser(bool visible)
     {
         if (Window == null) return;
         browser.Browser?.SetLoginVisible(visible);
@@ -684,12 +812,13 @@ internal sealed class MatrixPage : ContentPage
         }
         var connect = sessionReady ? "Klassenliste aktualisieren" : "Bei WebUntis anmelden";
         menuOpen = true;
-        string? action;
-        try { action = await DisplayActionSheetAsync("WebUntis-Konto", "Schließen", "Abmelden", connect); }
+        int action;
+        try { action = await ChooseAsync("WebUntis-Konto", [connect, "Abmelden"]); }
         finally { menuOpen = false; }
 
-        if (action == connect) await LoadClassesAsync(startWithLogin: !sessionReady);
-        else if (action == "Abmelden")
+        if (locked) return;
+        if (action == 0) await LoadClassesAsync(startWithLogin: !sessionReady);
+        else if (action == 1)
         {
             await RunAsync(async (service, _, _) =>
             {
@@ -709,6 +838,65 @@ internal sealed class MatrixPage : ContentPage
 
     private MatrixCard CreateDeckCard() => CreateMatrixCard(inDeck: true);
 
+    private async Task OpenCellExcuseAsync(MatrixCard card, AttendanceMatrix matrix, Student student, DateOnly day)
+    {
+        if (ControlsLocked || menuOpen || modalOpen || !classSelection.Teachers.Contains(matrix.ClassId) || !IsCurrent()) return;
+        await RunAsync(async (service, progress, token) =>
+        {
+            if (!IsCurrent()) return;
+            var person = AbsenceActions.RequirePerson(matrix, student);
+            var deckCard = deck.Entries.FirstOrDefault(entry => entry.Class.Id == matrix.ClassId)?.Card;
+            var prepared = matrix.PreparedAbsences ?? deckCard?.Matrix?.PreparedAbsences;
+            var cached = prepared is { Length: > 0 } ? AbsenceActions.ForDay(prepared, person, day) : null;
+            var lookupLive = cached is not { Length: > 0 };
+            var rows = lookupLive ? await service.ReadAbsenceActionsAsync(matrix, student, day, progress, token, allowSignIn: true) : cached!;
+            token.ThrowIfCancellationRequested();
+            if (!IsCurrent()) return;
+            var choices = AbsenceActions.Available(rows);
+            if (choices.Length == 0)
+            {
+                status.Text = rows.Length == 0 ? "Keine passende WebUntis-Abwesenheit gefunden." :
+                    "WebUntis bietet für diese Einträge keinen Entschuldigungsdialog an.";
+                await NoticeAsync("Entschuldigung", status.Text);
+                return;
+            }
+
+            var index = 0;
+            if (choices.Length > 1)
+            {
+                var labels = choices.Select(row => row.Reason.Length == 0 ? AbsenceActions.Period(row) :
+                    $"{AbsenceActions.Period(row)}\n{row.Reason}").ToArray();
+                index = await ChooseAsync($"Abwesenheit auswählen · {day:dd.MM.yyyy}", labels, token);
+            }
+            token.ThrowIfCancellationRequested();
+            if (index < 0 || !IsCurrent()) return;
+            if (!await service.ShowExcuseAsync(matrix, student, day, choices[index], progress, token, reuseList: lookupLive)) return;
+
+            matrix.PreparedAbsences = null;
+            if (deckCard?.Matrix is { } existing) existing.PreparedAbsences = null;
+            progress.Report($"{matrix.ClassName} · Fehlzeiten werden neu gelesen …");
+            var choice = new Student(matrix.ClassId, matrix.ClassName);
+            var range = new ReportRange(matrix.From, matrix.To);
+            var data = await service.MatrixAsync(choice, range, progress, token, allowSignIn: false, afterExcuse: true);
+            var updated = await Task.Run(data.Build, token);
+            token.ThrowIfCancellationRequested();
+            if (!updated.HasAbsenceReport)
+                throw new InvalidOperationException("Die aktualisierten Fehlzeiten konnten noch nicht gelesen werden. Aktualisiere die Klasse erneut.");
+            var sameDeckRange = deckCard?.Matrix is { } deckMatrix && deckMatrix.From == range.From && deckMatrix.To == range.To;
+            if (updated.HasCompleteReports && sameDeckRange && deckCard != null)
+                await RememberDeckMatrixAsync(service, choice, deckCard, updated, data, token);
+            if (!ReferenceEquals(card, deckCard) || !updated.HasCompleteReports) card.ShowMatrix(updated);
+            if (matrixCard != card && matrixCard.Matrix is { } daily && daily.ClassId == matrix.ClassId)
+            {
+                if (daily.From == range.From && daily.To == range.To) matrixCard.ShowMatrix(updated);
+                else matrixCard.Clear(choice.Name, "Aktualisiere die Tagesmatrix, um die neuen Fehlzeiten zu laden.");
+            }
+            status.Text = $"{choice.Name} · Aktuelle Fehlzeiten aus WebUntis geladen";
+        });
+
+        bool IsCurrent() => ReferenceEquals(card, ActiveCard) && ReferenceEquals(card.Matrix, matrix);
+    }
+
     private MatrixCard CreateMatrixCard(bool inDeck = false)
     {
         var card = new MatrixCard(inDeck);
@@ -717,10 +905,11 @@ internal sealed class MatrixPage : ContentPage
             if (ControlsLocked || modalOpen || menuOpen) return;
             await ShowModalAsync(new DayDetailPage(student.Name, day, cell, DayDetails.Create(student, day, cell, data.SchoolPeriods)));
         };
+        card.AbsenceRequested += async (matrix, student, day, _) => await OpenCellExcuseAsync(card, matrix, student, day);
         card.NotesRequested += async data =>
         {
             if (!ControlsLocked && !menuOpen && !modalOpen)
-                await DisplayAlertAsync("Abrufhinweise", string.Join(Environment.NewLine + Environment.NewLine, data.Notes), "Schließen");
+                await NoticeAsync("Abrufhinweise", string.Join(Environment.NewLine + Environment.NewLine, data.Notes));
         };
         card.VerticalScrolled += (distance, atTop) =>
         {
@@ -733,11 +922,43 @@ internal sealed class MatrixPage : ContentPage
 
     private async Task ShowModalAsync(ContentPage page)
     {
-        if (modalOpen || Window == null) return;
+        if (locked || modalOpen || Window == null) return;
         modalOpen = true;
         page.Disappearing += (_, _) => modalOpen = false;
         try { await Navigation.PushModalAsync(page); }
         catch (InvalidOperationException) { modalOpen = false; }
+    }
+
+    private Task<int> ChooseAsync(string title, string[] labels, CancellationToken token = default) =>
+        ShowDialogAsync(title, labels, null, token);
+
+    private Task NoticeAsync(string title, string message) => locked
+        ? Task.CompletedTask : ShowDialogAsync(title, null, message, lifetime.Token);
+
+    private async Task<int> ShowDialogAsync(string title, string[]? items, string? message, CancellationToken token)
+    {
+        if (locked || token.IsCancellationRequested || activeDialog != null || Platform.CurrentActivity is not { } activity) return -1;
+        var result = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var builder = new NativeDialog.Builder(activity);
+        builder.SetTitle(title);
+        builder.SetNegativeButton("Schließen", (_, _) => result.TrySetResult(-1));
+        if (items != null) builder.SetItems(items, (_, args) => result.TrySetResult(args.Which));
+        else builder.SetMessage(message);
+        using var dialog = builder.Create();
+        if (dialog == null) return -1;
+        activeDialog = dialog;
+        dialog.DismissEvent += (_, _) => result.TrySetResult(-1);
+        try
+        {
+            dialog.Show();
+            return await result.Task.WaitAsync(token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return -1; }
+        finally
+        {
+            activeDialog = null;
+            dialog.Dismiss();
+        }
     }
 
     private void UpdateControls()

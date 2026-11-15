@@ -581,7 +581,11 @@ function reportCommand(request) {
     function absenceEditorState() {
         if (editor?.id !== request.editorId) return {};
         const { doc } = editor;
-        if (editor.dialog) return { absenceEditorVisible: true, editorWidth: editor.width, editorHeight: editor.height };
+        if (editor.dialog) {
+            const closed = editor.closed === true || !visible(editor.dialog);
+            return { absenceEditorVisible: !closed, absenceEditorClosed: closed,
+                absenceEditorSaveRequested: editor.saveRequested, editorWidth: editor.width, editorHeight: editor.height };
+        }
         if (!documents.includes(doc)) return {};
         const form = doc.getElementById("excuseForm");
         const current = form?.closest('[role="dialog"]');
@@ -594,6 +598,14 @@ function reportCommand(request) {
         if (!pane || !current.contains(pane)) return { error: "Das WebUntis-Entschuldigungsformular konnte nicht erkannt werden." };
         const page = doc.defaultView;
         const frame = page.frameElement;
+        const mobile = request.mobileEditor === true;
+        if (mobile) {
+            const head = document.head;
+            const viewport = head?.querySelector('meta[name="viewport"]') ?? document.createElement("meta");
+            viewport.name = "viewport";
+            viewport.content = "width=device-width, initial-scale=1";
+            if (!viewport.isConnected) head?.append(viewport);
+        }
 
         // The host sizes the window. Keep Dijit from fitting this dialog inside it a second time.
         const widget = widgetById(current.getAttribute("widgetid") || current.id, page);
@@ -604,8 +616,8 @@ function reportCommand(request) {
         for (let part = form; part !== current; part = part.parentElement) parts.push(part);
         const naturalSize = { width: "auto", height: "auto", "min-width": "0px", "min-height": "0px",
             "max-width": "none", "max-height": "none", overflow: "visible" };
-        const dialogStyle = { ...naturalSize, position: "absolute", inset: "0px auto auto 0px", width: "max-content",
-            margin: "0px", "box-sizing": "border-box", "box-shadow": "none" };
+        const dialogStyle = { ...naturalSize, position: "absolute", inset: "0px auto auto 0px",
+            width: mobile ? "100%" : "max-content", margin: "0px", "box-sizing": "border-box", "box-shadow": "none" };
         const partStyle = { ...naturalSize, position: "relative", inset: "auto" };
         applyLayout();
 
@@ -638,9 +650,11 @@ function reportCommand(request) {
         page.scrollTo(0, 0);
         const size = measure();
         if (!size) return { error: "Die Größe des WebUntis-Entschuldigungsformulars konnte nicht bestimmt werden." };
-        // Fix the measured width before the viewport changes, so wrapping stays stable.
-        dialogStyle.width = (size.width - 2) + "px";
-        applyLayout();
+        if (!mobile) {
+            // Fix the measured width before the desktop window changes, so wrapping stays stable.
+            dialogStyle.width = (size.width - 2) + "px";
+            applyLayout();
+        }
         Object.assign(editor, size, { dialog: current });
 
         doc.addEventListener("click", onButton, true);
@@ -655,8 +669,10 @@ function reportCommand(request) {
         const resizeObserver = new page.ResizeObserver(() => {
             const size = measure();
             if (!size || (size.width === editor.width && size.height === editor.height)) return;
-            dialogStyle.width = (size.width - 2) + "px";
-            applyLayout();
+            if (!mobile) {
+                dialogStyle.width = (size.width - 2) + "px";
+                applyLayout();
+            }
             Object.assign(editor, size);
             notify("size");
         });
@@ -712,8 +728,10 @@ function reportCommand(request) {
                 form.removeEventListener("submit", onSave);
             }
             // Send dimensions and lifecycle signals to the host without transferring form values.
-            globalThis.chrome?.webview?.postMessage({ editorId: editor.id, action, saveRequested: editor.saveRequested,
-                width: editor.width, height: editor.height });
+            const message = { editorId: editor.id, action, saveRequested: editor.saveRequested,
+                width: editor.width, height: editor.height };
+            if (mobile) globalThis.FehlzeitenMxEditor?.postMessage(JSON.stringify(message));
+            else globalThis.chrome?.webview?.postMessage(message);
         }
 
         function addLayout(ownerDocument, rules) {

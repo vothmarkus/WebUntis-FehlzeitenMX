@@ -1026,7 +1026,7 @@ internal sealed class MainForm : Form
         if ((running != null && !backgroundRefresh) || !IsCurrent()) return;
         if (browser.PreparedAbsenceActions(matrix, student, day) is { Length: > 0 } rows)
         {
-            var available = Available(rows);
+            var available = AbsenceActions.Available(rows);
             if (direct && available.Length == 1) await RunAsync((token, progress) => EditAsync(available[0], token, progress));
             else ShowChoices(rows, available);
             return;
@@ -1045,7 +1045,7 @@ internal sealed class MainForm : Form
             {
                 var found = await browser.ReadAbsenceActionsAsync(matrix, student, day, progress, lookup.Token);
                 if (!IsCurrent() || menu is { Visible: false }) return;
-                var available = Available(found);
+                var available = AbsenceActions.Available(found);
                 if (direct && available.Length == 1) await EditAsync(available[0], token, progress);
                 else ShowChoices(found, available, menu, waiting);
             }
@@ -1061,9 +1061,6 @@ internal sealed class MainForm : Form
 
         bool IsCurrent() => !IsDisposed && tabs.SelectedTab == homePage && !source.IsDisposed &&
             homeViews.GetValueOrDefault(matrix.ClassName) == source && source.CurrentMatrix == matrix;
-
-        static AbsenceListEntry[] Available(AbsenceListEntry[] rows) => rows.Where(row => row.CanExcuse).OrderBy(row => row.From)
-            .ThenBy(row => CsvReport.ReadTime(row.Start)).ThenBy(row => row.To).ThenBy(row => CsvReport.ReadTime(row.End)).ToArray();
 
         ContextMenuStrip CreateMenu()
         {
@@ -1099,9 +1096,7 @@ internal sealed class MainForm : Form
                     "WebUntis bietet für diese Einträge keinen Entschuldigungsdialog an.");
             foreach (var row in available)
             {
-                var period = row.From == row.To ? $"{row.From:dd.MM.} · {row.Start}–{row.End}" :
-                    $"{row.From:dd.MM.} {row.Start} – {row.To:dd.MM.} {row.End}";
-                if (row.Status.Length > 0) period += $" · {row.Status}";
+                var period = AbsenceActions.Period(row);
                 var item = new ToolStripMenuItem($"Entschuldigung · {period}")
                 {
                     ToolTipText = row.Reason.Length > 0 ? row.Reason : "Entschuldigung in WebUntis öffnen"

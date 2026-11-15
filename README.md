@@ -22,25 +22,27 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.5.0
+## Android-Testversion 0.6.0
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-Installiere 0.5.0 als Update über 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
+Installiere 0.6.0 als Update über 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
 
-**Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Melde dich mit deinem Schulkonto an und tippe danach bei Bedarf auf **Weiter**, um die Klassenliste zu laden.
+Beim Start und beim Zurückkehren in die App entsperrst du sie über die Android-Abfrage mit Biometrie oder deiner Displaysperre.
+
+**Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Melde dich mit deinem Schulkonto an und tippe danach bei Bedarf auf **Weiter**, um die Klassenliste zu laden. Die App speichert die WebUntis-Sitzung verschlüsselt und stellt sie nach dem Entsperren automatisch wieder her, solange WebUntis sie akzeptiert.
 
 Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Frühere Auswahlen für Startseite und Meine Klassen werden zusammengeführt. Unter **⋮ → Klassen auswählen** stehen **Meine Klassen** und **Klassenlehrer** nebeneinander. Setzt du **Klassenlehrer**, ist die Klasse automatisch ausgewählt und steht vor den anderen Klassen. Wische über den Klassennamen oder verwende die Pfeile zum Wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste.
 
 Die Matrizen öffnen sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und vertikal für weitere Namen. Die Namensspalte und die Datumszeile bleiben sichtbar. Beim Scrollen zu weiteren Namen schiebt sich die App-Überschrift mit Logo und Menü nach oben. Beim Zurückscrollen fährt sie wieder ein.
 
-Tippe für die Tagesdetails auf eine Zelle. Zoome mit zwei Fingern.
+Tippe für die Tagesdetails auf eine Zelle. Zoome mit zwei Fingern. Halte eine Zelle in einer als **Klassenlehrer** markierten Klasse gedrückt, um das Entschuldigungsformular von WebUntis zu öffnen. Gibt es mehrere bearbeitbare Abwesenheiten für diese Person und diesen Tag, kannst du den Eintrag auswählen. Die App hält verfügbare Einträge verschlüsselt vor und prüft den ausgewählten Eintrag online. Nach dem Speichern in WebUntis lädt sie die betroffenen Fehlzeiten erneut.
 
 **Meine Klassen** zeigt das Schuljahr bis zum jüngsten gespeicherten Abruf. In der **Tagesmatrix** kannst du über **Zeitraum** den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. **Schuljahr bis heute** setzt den Zeitraum zurück.
 
 Vollständige Matrizen der gewählten Klassen und die Klassenliste werden mit AES-256-GCM verschlüsselt auf dem Gerät gespeichert. Der Schlüssel liegt im Android Keystore. Beim Öffnen sind die gespeicherten Matrizen auch offline mit Datum und Uhrzeit des Abrufs verfügbar. In einer aktiven WebUntis-Sitzung aktualisiert die geöffnete Stapelansicht ihre Klassen alle fünf Minuten im Hintergrund. Über **↻** kannst du sofort aktualisieren und dich bei Bedarf erneut anmelden. Ein unvollständiger Abruf lässt den letzten vollständigen Stand bestehen.
 
-Die App startet mit einem frischen WebUntis-Anmeldeprofil. **Abmelden** unter **WebUntis-Konto** löscht die lokal gespeicherten Matrizen und die Klassenliste. Entschuldigungen sind in den Tagesdetails lesbar.
+**Abmelden** unter **WebUntis-Konto** löscht die lokal gespeicherte Sitzung, die Matrizen und die Klassenliste. Entschuldigungen sind in den Tagesdetails lesbar.
 
 ### APK bauen
 

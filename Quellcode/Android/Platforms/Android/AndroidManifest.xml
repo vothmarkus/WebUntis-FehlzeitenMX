@@ -3,4 +3,6 @@
   <application android:allowBackup="false" android:usesCleartextTraffic="false"
     android:icon="@mipmap/bkt" android:roundIcon="@mipmap/bkt_round" android:supportsRtl="true" />
   <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+  <uses-permission android:name="android.permission.USE_FINGERPRINT" />
 </manifest>

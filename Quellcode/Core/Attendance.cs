@@ -120,6 +120,7 @@ public sealed class AttendanceMatrix
     public bool HasAbsenceReport { get; }
     public bool HasLatenessReport { get; }
     internal bool HasCompleteReports { get; }
+    internal AbsenceListEntry[]? PreparedAbsences { get; set; }
     public bool IsDemo { get; }
     public DateTimeOffset? FetchedAt { get; }
     public IReadOnlyList<SchoolPeriod> SchoolPeriods { get; }

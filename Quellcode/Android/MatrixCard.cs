@@ -24,6 +24,7 @@ internal sealed class MatrixCard : ContentView
     public AttendanceMatrix? Matrix { get; private set; }
     public bool IsFromDevice => fromDevice;
     public event Action<AttendanceMatrix, Student, DateOnly, DayCell>? DaySelected;
+    public event Action<AttendanceMatrix, Student, DateOnly, DayCell>? AbsenceRequested;
     public event Action<AttendanceMatrix>? NotesRequested;
     public event Action<float, bool>? VerticalScrolled;
     public event Action<int>? AdjacentRequested;
@@ -35,6 +36,10 @@ internal sealed class MatrixCard : ContentView
         canvas.DaySelected += (student, day, cell) =>
         {
             if (Matrix is { } current) DaySelected?.Invoke(current, student, day, cell);
+        };
+        canvas.AbsenceRequested += (student, day, cell) =>
+        {
+            if (Matrix is { } current) AbsenceRequested?.Invoke(current, student, day, cell);
         };
         canvas.VerticalScrolled += (distance, atTop) => VerticalScrolled?.Invoke(distance, atTop);
 
@@ -154,7 +159,7 @@ internal sealed class MatrixCard : ContentView
         header.IsVisible = className.Length > 0;
         canvas.IsVisible = Matrix is { Days.Length: > 0, Students.Length: > 0 };
         message.IsVisible = !canvas.IsVisible;
-        notes.IsVisible = Matrix is { Notes.Length: > 0 };
+        notes.IsVisible = !inDeck && Matrix is { Notes.Length: > 0 };
     }
 
     private static Button HeaderButton(string text, string description, double width)

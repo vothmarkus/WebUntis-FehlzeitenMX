@@ -10,7 +10,8 @@ namespace WebUntisAuswertung.Mobile;
 internal sealed class WebUntisSignInRequiredException()
     : Exception("Melde dich bei WebUntis an, um die Daten zu aktualisieren.");
 
-internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin) : IReportSupplement
+internal sealed partial class AndroidReports(MobileWebView view, Action<bool> showLogin, Action<bool> showExcuse,
+    Func<CancellationToken, Task> sessionConfirmed) : IReportSupplement
 {
     private const string LoginPage = Origin + "/WebUntis/?school=bkt";
     private static readonly Uri School = new(Origin);
@@ -22,16 +23,16 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
     private Student? currentClass;
 
     public async Task<(Student[] Classes, ReportRange SchoolYear)> ClassesAsync(IProgress<string> progress, CancellationToken token,
-        bool startWithLogin)
+        bool startWithLogin, bool allowSignIn = true)
     {
         try
         {
-            var state = await OpenReportsAsync(progress, token, includeClasses: true, startWithLogin: startWithLogin);
+            var state = await OpenReportsAsync(progress, token, includeClasses: true, startWithLogin: startWithLogin, allowSignIn: allowSignIn);
             var current = SchoolYears.StartYear(DateOnly.FromDateTime(DateTime.Today));
             if (state.GlobalYear is { } shown && shown != current.ToString(CultureInfo.InvariantCulture))
             {
                 await SelectYearAsync(current, token);
-                await OpenReportsAsync(progress, token, includeClasses: true);
+                await OpenReportsAsync(progress, token, includeClasses: true, allowSignIn: allowSignIn);
             }
             var year = await ReadSchoolYearAsync(token);
             if (year == null || SchoolYears.StartYear(year.From) != current) year = SchoolYears.CalendarRange(current);
@@ -47,7 +48,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
     }
 
     public async Task<MatrixData> MatrixAsync(Student choice, ReportRange range, IProgress<string> progress,
-        CancellationToken token, bool allowSignIn)
+        CancellationToken token, bool allowSignIn, bool afterExcuse = false)
     {
         var selection = new ReportSelection(choice.Id, range.From, range.To);
         currentClass = choice;
@@ -75,7 +76,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
                     reload = true;
                 }
             }
-            return await ReportAnalysis.ReadAsync(choice.Name, range, batch, this, progress, token);
+            return await ReportAnalysis.ReadAsync(choice.Name, range, batch, this, progress, token, afterExcuse: afterExcuse);
         }
         catch { reload = true; throw; }
         finally
@@ -121,6 +122,7 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
             {
                 showLogin(false);
                 reload = false;
+                await sessionConfirmed(token);
                 return state;
             }
             if (!view.Navigating && view.MainStatus >= 500)
@@ -555,7 +557,9 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
 
     private async Task<ReportState> CommandAsync(string action, CancellationToken token, ReportSelection? selection = null,
         ReportKind kind = ReportKind.Absences, bool includeClasses = false, bool roster = false, string? exportId = null,
-        string? waitForFormStamp = null, int? year = null, string? className = null, bool openBrowserLogin = false)
+        string? waitForFormStamp = null, int? year = null, string? className = null, bool openBrowserLogin = false,
+        AbsencePerson? absencePerson = null, DateOnly? absenceDay = null, AbsenceListEntry? absenceRow = null,
+        string? editorId = null, bool classAbsences = false)
     {
         token.ThrowIfCancellationRequested();
         if (!IsSchoolAddress(view.Address))
@@ -569,7 +573,8 @@ internal sealed class AndroidReports(MobileWebView view, Action<bool> showLogin)
             to = selection?.To.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             kind = kind.ToString(), excusedOnly = selection?.ExcusedOnly == true, includeClasses, roster, exportId, waitForFormStamp,
             allowLandingAsSignedIn = false, openBrowserLogin,
-            targetSchoolYear = year, className, lateOnly = kind == ReportKind.Lateness
+            targetSchoolYear = year, className, lateOnly = kind == ReportKind.Lateness,
+            absencePerson, absenceDay, absenceRow, editorId, classAbsences, mobileEditor = editorId != null
         }, Json);
         var command = $"globalThis.{CommandName}?.({request})";
         var result = await view.EvaluateAsync($"typeof globalThis.{CommandName} === 'function' ? {command} : 'uninitialized'", token);

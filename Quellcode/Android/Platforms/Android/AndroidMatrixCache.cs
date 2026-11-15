@@ -18,6 +18,7 @@ internal sealed class AndroidMatrixCache
     private const string KeyAlias = "fehlzeitenmx-matrix-v1";
     private const string Transformation = "AES/GCM/NoPadding";
     private const string ClassesFile = "classes.bin";
+    private const string SessionFile = "session.bin";
     private const int NonceSize = 12;
     private const int TagSize = 16;
     private const int MaxFileSize = 32 * 1024 * 1024;
@@ -48,6 +49,18 @@ internal sealed class AndroidMatrixCache
 
     public Task SaveClassesAsync(CachedClasses data, CancellationToken token) =>
         Run(() => Write(ClassesFile, data, token), token);
+
+    public Task<SavedWebUntisCookie[]?> ReadSessionAsync(CancellationToken token) =>
+        Run(() => Read<SavedWebUntisCookie[]>(SessionFile), token);
+
+    public Task SaveSessionAsync(SavedWebUntisCookie[] cookies, CancellationToken token) =>
+        Run(() => Write(SessionFile, cookies, token), token);
+
+    public Task ForgetSessionAsync() => Run(() =>
+    {
+        var path = Path.Combine(Folder, SessionFile);
+        if (File.Exists(path)) File.Delete(path);
+    }, CancellationToken.None);
 
     public Task SaveMatrixAsync(MatrixData data, CancellationToken token) =>
         Run(() => Write(MatrixFile(data.ClassId), data, token), token);

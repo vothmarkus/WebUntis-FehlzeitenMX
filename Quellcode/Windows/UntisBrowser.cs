@@ -462,12 +462,8 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
     public AbsenceListEntry[]? PreparedAbsenceActions(AttendanceMatrix matrix, Student student, DateOnly day)
     {
         if (!SessionConfirmed || !absencePages.TryGetValue(AbsenceSelection(matrix), out var page) || page.Absences is not { } rows ||
-            page.Redirected || page.Status >= 400 || !GetAbsencePerson(matrix, student, out var person)) return null;
-        var name = AbsenceName(person.Name);
-        var named = rows.Where(row => row.From <= day && day <= row.To && AbsenceName(row.StudentName) == name).ToArray();
-        // A name shared by multiple students can only be resolved with WebUntis' own student filter.
-        if (named.Any(row => row.StudentId.Length == 0)) return null;
-        return named.Where(row => person.Id.Length == 0 || row.StudentId == person.Id).ToArray();
+            page.Redirected || page.Status >= 400 || AbsenceActions.Person(matrix, student) is not { } person) return null;
+        return AbsenceActions.ForDay(rows, person, day);
     }
 
     public async Task<AbsenceListEntry[]> ReadAbsenceActionsAsync(AttendanceMatrix matrix, Student student, DateOnly day,
@@ -486,7 +482,7 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
             try
             {
                 var state = await WaitForAbsenceActionsAsync(page, matrix.ClassName, new ReportSelection(matrix.ClassId, day, day),
-                    token, RequireAbsencePerson(matrix, student), day);
+                    token, AbsenceActions.RequirePerson(matrix, student), day);
                 return state.EditableAbsences;
             }
             catch (TimeoutException)
@@ -508,7 +504,7 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         var selection = AbsenceSelection(matrix);
         try
         {
-            var person = RequireAbsencePerson(matrix, student);
+            var person = AbsenceActions.RequirePerson(matrix, student);
             if (PreparedAbsenceActions(matrix, student, day)?.Any(candidate => candidate.Id == row.Id && candidate.CanExcuse) == true &&
                 absencePages.Remove(selection, out var prepared))
             {
@@ -585,20 +581,6 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
     }
 
     private static ReportSelection AbsenceSelection(AttendanceMatrix matrix) => new(matrix.ClassId, matrix.From, matrix.To);
-
-    private static string AbsenceName(string name) => string.Join(' ', name.Split((char[]?)null,
-        StringSplitOptions.RemoveEmptyEntries)).Normalize().ToLowerInvariant();
-
-    private static bool GetAbsencePerson(AttendanceMatrix matrix, Student student, out AbsencePerson person)
-    {
-        var id = student.Id.Length > 0 && student.Id.All(char.IsAsciiDigit) ? student.Id : "";
-        person = new AbsencePerson(id, student.Name);
-        return id.Length > 0 || matrix.Students.Count(candidate => AbsenceName(candidate.Name) == AbsenceName(student.Name)) == 1;
-    }
-
-    private static AbsencePerson RequireAbsencePerson(AttendanceMatrix matrix, Student student) =>
-        GetAbsencePerson(matrix, student, out var person) ? person :
-            throw new InvalidOperationException("Für diese Person gibt es keine eindeutige WebUntis-Schülerkennung.");
 
     private async Task<ReportState> WaitForAbsenceActionsAsync(SupplementPage page, string className,
         ReportSelection selection, CancellationToken token, AbsencePerson? person = null, DateOnly? day = null,
