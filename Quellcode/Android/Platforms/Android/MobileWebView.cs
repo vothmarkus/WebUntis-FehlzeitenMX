@@ -111,7 +111,7 @@ internal sealed class MobileWebView : IDisposable
         return true;
     }
 
-    public static async Task ResetProfileAsync()
+    private static async Task ResetProfileAsync()
     {
         using var done = new JavascriptResult();
         var cookies = CookieManager.Instance;
@@ -123,6 +123,8 @@ internal sealed class MobileWebView : IDisposable
         }
         WebStorage.Instance?.DeleteAllData();
     }
+
+    public static void PersistProfile() => CookieManager.Instance?.Flush();
 
     public static SavedWebUntisCookie[] CaptureSession()
     {
@@ -140,23 +142,25 @@ internal sealed class MobileWebView : IDisposable
         return [.. cookies.Values];
     }
 
-    public static async Task<bool> RestoreSessionAsync(SavedWebUntisCookie[] saved, CancellationToken token)
+    public static async Task RestoreMissingCookiesAsync(SavedWebUntisCookie[] saved, CancellationToken token)
     {
         var manager = CookieManager.Instance;
-        if (manager == null) return false;
+        if (manager == null) return;
         var now = DateTimeOffset.UtcNow;
-        var accepted = false;
+        var canReadScopes = WebViewFeature.IsFeatureSupported(WebViewFeature.GetCookieInfo);
+        var current = CaptureSession().Select(item => (item.Name, item.Domain, item.Path)).ToHashSet();
         // Set shorter paths first so the restored jar keeps all distinct scopes.
         foreach (var cookie in saved.Select(item => SavedWebUntisCookie.Read(item.Header, now)).OfType<SavedWebUntisCookie>()
                      .OrderBy(item => item.Path.Length))
         {
             token.ThrowIfCancellationRequested();
+            if (!current.Add((cookie.Name, cookie.Domain, cookie.Path))) continue;
+            if (!canReadScopes && manager.GetCookie(WebUntisReports.Origin + cookie.Path)?.Split(';')
+                .Any(pair => pair.TrimStart().StartsWith(cookie.Name + "=", StringComparison.Ordinal)) == true) continue;
             using var result = new JavascriptResult();
             manager.SetCookie(WebUntisReports.Origin + "/", cookie.Header, result);
-            accepted |= await result.Task.WaitAsync(TimeSpan.FromSeconds(5), token) == "true";
+            await result.Task.WaitAsync(TimeSpan.FromSeconds(5), token);
         }
-        token.ThrowIfCancellationRequested();
-        return accepted;
     }
 
     public async Task SignOutAsync()

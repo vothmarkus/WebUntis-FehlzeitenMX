@@ -56,12 +56,6 @@ internal sealed class AndroidMatrixCache
     public Task SaveSessionAsync(SavedWebUntisCookie[] cookies, CancellationToken token) =>
         Run(() => Write(SessionFile, cookies, token), token);
 
-    public Task ForgetSessionAsync() => Run(() =>
-    {
-        var path = Path.Combine(Folder, SessionFile);
-        if (File.Exists(path)) File.Delete(path);
-    }, CancellationToken.None);
-
     public Task SaveMatrixAsync(MatrixData data, CancellationToken token) =>
         Run(() => Write(MatrixFile(data.ClassId), data, token), token);
 

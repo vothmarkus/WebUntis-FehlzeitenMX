@@ -53,7 +53,8 @@ function reportCommand(request) {
         return {};
     }
 
-    const loginForm = doc => [...doc.querySelectorAll('input[type="password"]')].some(visible);
+    const loginForm = doc => [...doc.querySelectorAll('input[type="password"]')].find(visible);
+    if (request.mobileLogin === true) fitMobileLogin(documents.map(loginForm).find(Boolean));
     if (request.openBrowserLogin === true &&
         /willkommen bei web\s*untis/i.test(clean(document.body?.innerText || document.body?.textContent))) {
         const actions = [...document.querySelectorAll('a,button,[role="button"]')].filter(node =>
@@ -134,7 +135,7 @@ function reportCommand(request) {
             location.hash.includes("/class-register-reports");
         const classRegister = document.querySelector('a[href="/class-register-overview"],a[href="/class-register-reports"]');
         const landing = request.allowLandingAsSignedIn !== false && location.pathname === "/" && document.readyState === "complete";
-        if (visible(classRegister) || landing) {
+        if (visible(classRegister) || request.mobileLogin === true && classRegister || landing) {
             return { stage: "signedIn", atReports, hasFrame: frames.length > 0 };
         }
         return { stage: "loading", atReports, hasFrame: frames.length > 0 };
@@ -418,6 +419,68 @@ function reportCommand(request) {
         const index = order.find(i => !matchesDate(dateInputs[i], i));
         setDate(dateInputs[index], index === 0 ? request.from : request.to);
         return index === 0 ? "Startdatum" : "Enddatum";
+    }
+
+    function fitMobileLogin(field) {
+        const previous = exportHost.fehlzeitenMxLoginLayout;
+        if (previous?.field === field) return;
+        previous?.restore();
+        delete exportHost.fehlzeitenMxLoginLayout;
+        if (!field) return;
+
+        const owner = field.ownerDocument;
+        const frame = owner.defaultView.frameElement;
+        const bodyAttr = "data-fehlzeiten-mx-login-content";
+        const outerAttr = "data-fehlzeiten-mx-login-frame-parent";
+        const frameAttr = "data-fehlzeiten-mx-login-frame";
+        const markers = [];
+        const sheets = [];
+        let viewport;
+        if (!document.querySelector('meta[name="viewport"]') && document.head) {
+            viewport = document.createElement("meta");
+            viewport.name = "viewport";
+            viewport.content = "width=device-width, initial-scale=1";
+            document.head.append(viewport);
+        }
+        markParents(field.form ?? field, bodyAttr);
+        addRules(owner, `
+            [${bodyAttr}] { overflow: visible !important; height: auto !important; max-height: none !important; }
+            html[${bodyAttr}] { overflow-y: auto !important; min-height: 100% !important; }
+        `);
+        if (frame) {
+            markParents(frame.parentElement, outerAttr);
+            mark(frame, frameAttr);
+            addRules(document, `
+                [${outerAttr}] { overflow: visible !important; transform: none !important; contain: none !important; }
+                [${frameAttr}] {
+                    position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important;
+                    max-height: none !important; max-width: none !important; margin: 0 !important;
+                    padding: 0 !important; border: 0 !important; z-index: 2147483647 !important;
+                }
+            `);
+        }
+        exportHost.fehlzeitenMxLoginLayout = { field, restore() {
+            for (const [node, attr] of markers) node.removeAttribute(attr);
+            for (const [doc, sheet] of sheets)
+                doc.adoptedStyleSheets = doc.adoptedStyleSheets.filter(active => active !== sheet);
+            viewport?.remove();
+        } };
+
+        function markParents(node, attr) {
+            for (let element = node; element; element = element.parentElement) mark(element, attr);
+        }
+
+        function mark(node, attr) {
+            node.setAttribute(attr, "");
+            markers.push([node, attr]);
+        }
+
+        function addRules(doc, css) {
+            const sheet = new doc.defaultView.CSSStyleSheet();
+            sheet.replaceSync(css);
+            doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+            sheets.push([doc, sheet]);
+        }
     }
 
     function absenceActions() {

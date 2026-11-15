@@ -22,15 +22,15 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.6.2
+## Android-Testversion 0.6.3
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-Installiere 0.6.2 als Update über 0.6.1, 0.6.0, 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
+Installiere 0.6.3 als Update über 0.6.2, 0.6.1, 0.6.0, 0.5.0 oder 0.4.0. Beim Wechsel von 0.3.0 oder älter ist wegen des Signierschlüssels einmalig eine Neuinstallation nötig.
 
 Beim Start und beim Zurückkehren in die App entsperrst du sie über die Android-Abfrage mit Biometrie oder deiner Displaysperre.
 
-**Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Melde dich mit deinem Schulkonto an und tippe danach bei Bedarf auf **Weiter**, um die Klassenliste zu laden. Die App speichert die WebUntis-Sitzung verschlüsselt und stellt sie nach dem Entsperren automatisch wieder her, solange WebUntis sie akzeptiert.
+**Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Die App behält ihr WebUntis-Profil bei App-Sperre und Updates. Fehlende Sitzungscookies ergänzt sie aus der verschlüsselten Sicherung. Verlangt WebUntis eine neue Anmeldung, öffnet sich die Login-Seite aus der Matrix. Bei Bedarf kannst du über **Anmelden** in der Statuszeile erneut starten.
 
 Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Frühere Auswahlen für Startseite und Meine Klassen werden zusammengeführt. Unter **⋮ → Klassen auswählen** stehen **Meine Klassen** und **Klassenlehrer** nebeneinander. Setzt du **Klassenlehrer**, ist die Klasse automatisch ausgewählt und steht vor den anderen Klassen. Wische über den Klassennamen oder verwende die Pfeile zum Wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste.
 

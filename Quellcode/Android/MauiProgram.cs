@@ -1,4 +1,5 @@
 using Microsoft.Maui.Handlers;
+using AndroidSettings = Microsoft.Maui.Controls.PlatformConfiguration.AndroidSpecific;
 
 namespace WebUntisAuswertung.Mobile;
 
@@ -33,6 +34,7 @@ internal sealed class MobileApp : Application
     {
         var gate = new AppLockPage();
         var window = new Window(gate);
+        AndroidSettings.Application.SetWindowSoftInputModeAdjust(window, AndroidSettings.WindowSoftInputModeAdjust.Resize);
         var active = false;
         var open = false;
         var prompting = false;

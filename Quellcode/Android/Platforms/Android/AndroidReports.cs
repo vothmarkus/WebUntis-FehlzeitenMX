@@ -117,7 +117,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
             token.ThrowIfCancellationRequested();
             if (view.RendererGone)
                 throw new InvalidOperationException("Android WebView wurde beendet. Starte die App erneut.");
-            var state = await ReadReportPageAsync(includeClasses, !browserPromptHandled, token);
+            var state = await ReadReportPageAsync(includeClasses, !browserPromptHandled, waitingForLogin, token);
             if (state?.Stage == "reports" && !view.Navigating)
             {
                 showLogin(false);
@@ -190,10 +190,15 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         }
     }
 
-    private async Task<ReportState?> ReadReportPageAsync(bool includeClasses, bool openBrowserLogin, CancellationToken token)
+    private async Task<ReportState?> ReadReportPageAsync(bool includeClasses, bool openBrowserLogin, bool mobileLogin,
+        CancellationToken token)
     {
         if (view.Navigating) return null;
-        try { return await CommandAsync("probe", token, includeClasses: includeClasses, openBrowserLogin: openBrowserLogin); }
+        try
+        {
+            return await CommandAsync("probe", token, includeClasses: includeClasses,
+                openBrowserLogin: openBrowserLogin, mobileLogin: mobileLogin);
+        }
         catch (TimeoutException) { return null; }
     }
 
@@ -562,7 +567,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         ReportKind kind = ReportKind.Absences, bool includeClasses = false, bool roster = false, string? exportId = null,
         string? waitForFormStamp = null, int? year = null, string? className = null, bool openBrowserLogin = false,
         AbsencePerson? absencePerson = null, DateOnly? absenceDay = null, AbsenceListEntry? absenceRow = null,
-        string? editorId = null, bool classAbsences = false)
+        string? editorId = null, bool classAbsences = false, bool mobileLogin = false)
     {
         token.ThrowIfCancellationRequested();
         if (!IsSchoolAddress(view.Address))
@@ -575,7 +580,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
             from = selection?.From.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             to = selection?.To.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             kind = kind.ToString(), excusedOnly = selection?.ExcusedOnly == true, includeClasses, roster, exportId, waitForFormStamp,
-            allowLandingAsSignedIn = false, openBrowserLogin,
+            allowLandingAsSignedIn = false, openBrowserLogin, mobileLogin,
             targetSchoolYear = year, className, lateOnly = kind == ReportKind.Lateness,
             absencePerson, absenceDay, absenceRow, editorId, classAbsences, mobileEditor = editorId != null
         }, Json);

@@ -1,5 +1,7 @@
 using Android.Widget;
 using Microsoft.Maui.Handlers;
+using NativeContext = Android.Content.Context;
+using NativeMeasureMode = Android.Views.MeasureSpecMode;
 
 namespace WebUntisAuswertung.Mobile;
 
@@ -14,7 +16,7 @@ internal sealed class BrowserSurfaceHandler() : ViewHandler<BrowserSurface, Fram
 
     protected override FrameLayout CreatePlatformView()
     {
-        var frame = new FrameLayout(Context);
+        var frame = new BrowserFrame(Context);
         VirtualView.Browser = new MobileWebView(frame);
         return frame;
     }
@@ -24,5 +26,14 @@ internal sealed class BrowserSurfaceHandler() : ViewHandler<BrowserSurface, Fram
         VirtualView.Browser?.Dispose();
         VirtualView.Browser = null;
         base.DisconnectHandler(platformView);
+    }
+
+    private sealed class BrowserFrame(NativeContext context) : FrameLayout(context)
+    {
+        protected override void OnMeasure(int widthMeasureSpec, int heightMeasureSpec) =>
+            base.OnMeasure(Fill(widthMeasureSpec), Fill(heightMeasureSpec));
+
+        private static int Fill(int spec) => MeasureSpec.GetMode(spec) == NativeMeasureMode.AtMost
+            ? MeasureSpec.MakeMeasureSpec(MeasureSpec.GetSize(spec), NativeMeasureMode.Exactly) : spec;
     }
 }
