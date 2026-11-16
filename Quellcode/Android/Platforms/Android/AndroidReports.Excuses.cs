@@ -87,8 +87,16 @@ internal sealed partial class AndroidReports
             if (!closed && !closeExcuse)
             {
                 view.SetEditing(true);
-                showExcuse(true);
-                _ = view.FitEditorOnOpenAsync(token);
+                var fitted = await view.FitEditorOnOpenAsync(token);
+                token.ThrowIfCancellationRequested();
+                var form = await ReadEditorAsync(token);
+                if (!closed && !closeExcuse)
+                {
+                    if (!form.AbsenceEditorVisible)
+                        throw new InvalidOperationException("Das Entschuldigungsformular ist nicht mehr geöffnet. Öffne es erneut.");
+                    if (!fitted) throw new InvalidOperationException("Das Entschuldigungsformular konnte nicht an die Bildschirmbreite angepasst werden.");
+                    await showExcuse(true);
+                }
             }
             while (!closed && !closeExcuse)
             {
@@ -107,11 +115,14 @@ internal sealed partial class AndroidReports
         finally
         {
             view.EditorMessage -= OnEditorMessage;
-            showExcuse(false);
-            view.SetEditing(false);
-            if (!view.RendererGone && !token.IsCancellationRequested) view.Go("about:blank");
-            preparedAbsences = null;
-            reload = true;
+            try { await showExcuse(false); }
+            finally
+            {
+                view.SetEditing(false);
+                preparedAbsences = null;
+                reload = true;
+                if (!view.RendererGone && !token.IsCancellationRequested) view.Go("about:blank");
+            }
         }
 
         async Task<bool> OpenEditorAsync()
@@ -214,7 +225,7 @@ internal sealed partial class AndroidReports
         {
             token.ThrowIfCancellationRequested();
             if (view.RendererGone)
-                throw new InvalidOperationException("Android WebView wurde beendet. Starte die App erneut.");
+                throw new InvalidOperationException(MobileWebView.RendererMessage);
             if (!view.Navigating)
             {
                 var state = await CommandAsync(action, token, selection, waitForFormStamp: changed, year: year,

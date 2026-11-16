@@ -24,12 +24,7 @@ internal sealed class BrowserSurfaceHandler() : ViewHandler<BrowserSurface, Fram
 {
     private static readonly PropertyMapper<BrowserSurface, BrowserSurfaceHandler> Mapper = new(ViewMapper);
 
-    protected override FrameLayout CreatePlatformView()
-    {
-        var frame = new BrowserFrame(Context);
-        VirtualView.Browser = new MobileWebView(frame);
-        return frame;
-    }
+    protected override FrameLayout CreatePlatformView() => new BrowserFrame(Context);
 
     protected override void DisconnectHandler(FrameLayout platformView)
     {

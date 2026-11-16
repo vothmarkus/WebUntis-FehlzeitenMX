@@ -36,7 +36,7 @@ internal sealed partial class MatrixPage
             var previous = refreshBrowser.Browser;
             if (refreshBrowser.GetBrowser() is not { } view) return;
             if (!ReferenceEquals(view, previous)) refreshReports = null;
-            var service = refreshReports ??= new AndroidReports(view, _ => { }, _ => { }, _ => Task.CompletedTask);
+            var service = refreshReports ??= new AndroidReports(view, _ => { }, _ => Task.CompletedTask, _ => Task.CompletedTask);
             var updated = 0;
             var incomplete = 0;
             var stored = true;

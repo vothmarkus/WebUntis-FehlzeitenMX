@@ -12,11 +12,17 @@ internal sealed partial class MatrixPage : ContentPage
     private const string ChooseClass = "Wähle eine Klasse.";
     private const string InitialUpdate = "Für diese Klasse liegt noch kein Datenstand vor.";
     private const string HeadingAnimation = "SlideHeading";
+    private const string BrowserAnimation = "SlideExcuseEditor";
     private static readonly GridLength BrowserToolbarHeight = new(62);
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
     private readonly BrowserSurface browser = new();
-    private readonly RowDefinition browserToolbar = new(new GridLength(0));
-    private readonly Grid loginLayer = new() { IsVisible = false, BackgroundColor = Surface };
+    private readonly Grid browserLayer = new()
+    {
+        BackgroundColor = Surface,
+        InputTransparent = true,
+        Opacity = 0,
+        RowDefinitions = { new(BrowserToolbarHeight), new(GridLength.Star) }
+    };
     private readonly Grid root;
     private readonly Label loginAddress = MobileStyle.Label(WebUntisReports.Origin, 12, Muted);
     private readonly Label browserTitle = MobileStyle.Label("WebUntis-Anmeldung", 14, bold: true);
@@ -72,6 +78,7 @@ internal sealed partial class MatrixPage : ContentPage
     private bool modalOpen;
     private bool menuOpen;
     private bool headingCollapsed;
+    private bool browserVisible;
     private bool excuseVisible;
     private bool locked;
     private double headingHeight = 44;
@@ -90,7 +97,6 @@ internal sealed partial class MatrixPage : ContentPage
         matrixCard.Clear("", ChooseClass);
         deck.SelectionChanged += () =>
         {
-            if (preloadingAbsences) transfer?.Cancel();
             ShowHeadingIfNoMatrix();
             ScheduleAbsencePreload();
         };
@@ -114,13 +120,10 @@ internal sealed partial class MatrixPage : ContentPage
         menu.Clicked += async (_, _) => await ShowMenuAsync();
         cancel.Clicked += (_, _) => CancelTransfer();
 
-        root = new Grid { RowDefinitions = { browserToolbar, new(GridLength.Star) } };
-        root.Add(refreshBrowser, 0, 1);
-        root.Add(browser, 0, 1);
-        browser.InputTransparent = true;
+        root = new Grid { IsClippedToBounds = true };
+        root.Add(refreshBrowser);
         root.Add(workspace);
-        Grid.SetRowSpan(workspace, 2);
-        root.Add(loginLayer);
+        root.Add(browserLayer);
         BuildWorkspace();
         BuildLogin();
         root.SizeChanged += (_, _) => SizeBrowser();
@@ -254,7 +257,9 @@ internal sealed partial class MatrixPage : ContentPage
         }, 1);
         toolbar.Add(browserNext, 2);
         toolbar.Add(browserClose, 3);
-        loginLayer.Add(toolbar);
+        browserLayer.Add(toolbar);
+        browserLayer.Add(browser, 0, 1);
+        AutomationProperties.SetExcludedWithChildren(browserLayer, true);
     }
 
     protected override bool OnBackButtonPressed()
@@ -264,7 +269,7 @@ internal sealed partial class MatrixPage : ContentPage
             reports?.CloseExcuse();
             return true;
         }
-        if (loginLayer.IsVisible)
+        if (browserVisible)
         {
             if (browser.Browser?.GoBack() != true) CancelTransfer();
             return true;
@@ -629,7 +634,7 @@ internal sealed partial class MatrixPage : ContentPage
         if (absencePreloadTimer == null)
         {
             absencePreloadTimer = Dispatcher.CreateTimer();
-            absencePreloadTimer.Interval = TimeSpan.FromMilliseconds(400);
+            absencePreloadTimer.Interval = TimeSpan.FromMilliseconds(700);
             absencePreloadTimer.IsRepeating = false;
             absencePreloadTimer.Tick += async (_, _) => await PreloadActiveAbsencesAsync();
         }
@@ -696,7 +701,7 @@ internal sealed partial class MatrixPage : ContentPage
             cancellation.Token.ThrowIfCancellationRequested();
             if (reports == null)
             {
-                reports = new AndroidReports(view, ShowLogin, ShowExcuse, ConfirmSessionAsync);
+                reports = new AndroidReports(view, ShowLogin, ShowExcuseAsync, ConfirmSessionAsync);
                 view.LoginAddressChanged += UpdateLoginAddress;
             }
             await action(reports, progress, cancellation.Token);
@@ -790,16 +795,16 @@ internal sealed partial class MatrixPage : ContentPage
 
     private void CancelTransfer()
     {
-        if (!InteractiveTransferVisible && !loginLayer.IsVisible)
+        if (!InteractiveTransferVisible && !browserVisible)
         {
             deckRefresh?.Cancel();
             cancel.IsEnabled = false;
             return;
         }
-        if (loginLayer.IsVisible && !excuseVisible) signInDismissed = true;
+        if (browserVisible && !excuseVisible) signInDismissed = true;
         cancel.IsEnabled = false;
         transfer?.Cancel();
-        if (loginLayer.IsVisible && browser.Browser is { RendererGone: false } view) view.Go("about:blank");
+        if (browserVisible && browser.Browser is { RendererGone: false } view) view.Go("about:blank");
         ShowLogin(false);
     }
 
@@ -814,35 +819,72 @@ internal sealed partial class MatrixPage : ContentPage
         ShowBrowser(visible);
     }
 
-    private void ShowExcuse(bool visible)
+    private async Task ShowExcuseAsync(bool visible)
     {
-        excuseVisible = visible;
-        if (locked || !visible && !loginLayer.IsVisible) return;
-        browserTitle.Text = visible ? "WebUntis-Entschuldigung" : "WebUntis-Anmeldung";
-        browserBack.IsVisible = browserNext.IsVisible = !visible;
-        SemanticProperties.SetDescription(browserClose, visible ? "Entschuldigungsformular schließen" : "Anmeldung abbrechen");
-        ShowBrowser(visible);
+        if (visible)
+        {
+            if (locked || Window == null) return;
+            excuseVisible = true;
+            browserTitle.Text = "WebUntis-Entschuldigung";
+            browserBack.IsVisible = browserNext.IsVisible = false;
+            SemanticProperties.SetDescription(browserClose, "Entschuldigungsformular schließen");
+            browserLayer.TranslationY = Math.Max(0, root.Height);
+            ShowBrowser(true);
+            await SlideBrowserAsync(entering: true);
+            browserLayer.InputTransparent = locked;
+        }
+        else if (excuseVisible)
+        {
+            try { await SlideBrowserAsync(entering: false); }
+            finally
+            {
+                ShowBrowser(false);
+                browserLayer.TranslationY = 0;
+                excuseVisible = false;
+                browserTitle.Text = "WebUntis-Anmeldung";
+                browserBack.IsVisible = browserNext.IsVisible = true;
+                SemanticProperties.SetDescription(browserClose, "Anmeldung abbrechen");
+            }
+        }
+    }
+
+    private async Task SlideBrowserAsync(bool entering)
+    {
+        browserLayer.InputTransparent = true;
+        var end = entering ? 0.0 : 1.0;
+        if (!locked && Window != null && browserLayer.Handler != null && root.Height > 0 &&
+            browser.Browser is { RendererGone: false })
+        {
+            var duration = entering ? 230u : 190u;
+            var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            new Animation(Apply, 1 - end, end, entering ? Easing.CubicOut : Easing.CubicIn)
+                .Commit(browserLayer, BrowserAnimation, length: duration, finished: (_, _) => finished.TrySetResult());
+            try { await finished.Task.WaitAsync(TimeSpan.FromMilliseconds(duration + 250), lifetime.Token); }
+            catch (TimeoutException) { browserLayer.AbortAnimation(BrowserAnimation); }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { browserLayer.AbortAnimation(BrowserAnimation); }
+        }
+        Apply(end);
+
+        void Apply(double offset) => browserLayer.TranslationY = offset * Math.Max(0, root.Height);
     }
 
     private void ShowBrowser(bool visible)
     {
-        if (Window == null) return;
-        if (visible && !loginLayer.IsVisible) UpdateLoginAddress(browser.Browser?.LoginAddress);
-        browserToolbar.Height = visible ? BrowserToolbarHeight : new GridLength(0);
-        browser.InputTransparent = !visible;
-        browser.ZIndex = visible ? 1 : 0;
-        loginLayer.IsVisible = visible;
-        loginLayer.ZIndex = 2;
-        workspace.Opacity = visible ? 0 : 1;
+        if (browserVisible == visible || visible && Window == null) return;
+        browserVisible = visible;
+        if (visible) UpdateLoginAddress(browser.Browser?.LoginAddress);
+        // Keep the WebView attached and measured so fitting doesn't depend on the panel becoming visible.
+        browserLayer.Opacity = visible ? 1 : 0;
+        browserLayer.InputTransparent = !visible;
         workspace.InputTransparent = visible;
         AutomationProperties.SetExcludedWithChildren(workspace, visible);
-        SizeBrowser();
+        AutomationProperties.SetExcludedWithChildren(browserLayer, !visible);
         browser.Browser?.SetLoginVisible(visible);
     }
 
     private void SizeBrowser()
     {
-        browser.HeightRequest = loginLayer.IsVisible && root.Height > BrowserToolbarHeight.Value
+        browser.HeightRequest = root.Height > BrowserToolbarHeight.Value
             ? root.Height - BrowserToolbarHeight.Value : -1;
     }
 

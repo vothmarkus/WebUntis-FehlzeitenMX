@@ -10,7 +10,7 @@ namespace WebUntisAuswertung.Mobile;
 internal sealed class WebUntisSignInRequiredException()
     : Exception("Melde dich bei WebUntis an, um die Daten zu aktualisieren.");
 
-internal sealed partial class AndroidReports(MobileWebView view, Action<bool> showLogin, Action<bool> showExcuse,
+internal sealed partial class AndroidReports(MobileWebView view, Action<bool> showLogin, Func<bool, Task> showExcuse,
     Func<CancellationToken, Task> sessionConfirmed) : IReportSupplement
 {
     private const string LoginPage = Origin + "/WebUntis/?school=bkt";
@@ -422,7 +422,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         return ReportTransfer.FetchAsync(uri, School, cookies, userAgent, token);
     }
 
-    private static async Task<byte[]?> DownloadAsync(MobileWebView.Download download, string id, CancellationToken token)
+    private async Task<byte[]?> DownloadAsync(MobileWebView.Download download, string id, CancellationToken token)
     {
         if (!download.Url.StartsWith("blob:", StringComparison.OrdinalIgnoreCase))
             return await DownloadHttpAsync(download.Url, download.UserAgent, token);
@@ -446,13 +446,13 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
                 return true;
             })()
             """;
-        if (await MobileWebView.EvaluateAsync(download.View, start, token) != "true")
+        if (await view.EvaluateWindowAsync(download.View, start, token) != "true")
             throw new InvalidOperationException("Die von WebUntis erzeugte CSV kann in diesem Fenster nicht gelesen werden.");
         var test = $"globalThis.{property}?.id === {key} && globalThis.{property}.done ? globalThis.{property}.file?.size ?? -1 : null";
         int size;
         do
         {
-            var result = await MobileWebView.EvaluateAsync(download.View, test, token);
+            var result = await view.EvaluateWindowAsync(download.View, test, token);
             if (int.TryParse(result, CultureInfo.InvariantCulture, out size)) break;
             await Task.Delay(180, token);
         } while (true);
@@ -476,12 +476,12 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
                     return true;
                 })()
                 """;
-            if (await MobileWebView.EvaluateAsync(download.View, begin, token) != "true")
+            if (await view.EvaluateWindowAsync(download.View, begin, token) != "true")
                 throw new InvalidDataException("Die CSV-Übertragung wurde unterbrochen.");
             string? encoded;
             do
             {
-                var result = await MobileWebView.EvaluateAsync(download.View,
+                var result = await view.EvaluateWindowAsync(download.View,
                     $"globalThis.{property}?.id === {key} ? globalThis.{property}.{index} ?? null : null", token);
                 encoded = JsonSerializer.Deserialize<string>(result, Json);
                 if (encoded == null) await Task.Delay(60, token);
@@ -490,7 +490,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
                 length != Math.Min(chunk, bytes.Length - offset))
                 throw new InvalidDataException("Ein Abschnitt der CSV konnte nicht eingelesen werden.");
         }
-        await MobileWebView.EvaluateAsync(download.View, $"if (globalThis.{property}?.id === {key}) delete globalThis.{property};", token);
+        await view.EvaluateWindowAsync(download.View, $"if (globalThis.{property}?.id === {key}) delete globalThis.{property};", token);
         return bytes;
     }
 

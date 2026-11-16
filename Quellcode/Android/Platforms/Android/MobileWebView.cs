@@ -13,14 +13,14 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class MobileWebView : IDisposable
 {
-    internal const string RendererMessage = "Android WebView wurde beendet. Starte den Abruf erneut.";
+    internal const string RendererMessage = "Android WebView wurde beendet. Versuche es erneut.";
     private static readonly int[] EditorFitDelays = [0, 140, 320];
     private readonly FrameLayout host;
     private readonly BrowserClient client;
     private readonly BrowserChrome chrome;
     private readonly Dictionary<NativeWebView, DownloadListener> listeners = [];
-    private readonly HashSet<NativeWebView> windows = [];
-    private readonly NativeWebView reports;
+    private readonly CancellationTokenSource rendererLifetime = new();
+    private NativeWebView? reports;
     private readonly EditorListener? editorListener;
     private NativeWebView? loginPopup;
     private bool disposed;
@@ -32,61 +32,70 @@ internal sealed class MobileWebView : IDisposable
         this.host = host;
         client = new BrowserClient(this);
         chrome = new BrowserChrome(this);
-        reports = AddView();
-        if (WebViewFeature.IsFeatureSupported(WebViewFeature.WebMessageListener))
+        try
         {
-            editorListener = new EditorListener(this);
-            WebViewCompat.AddWebMessageListener(reports, "FehlzeitenMxEditor", new HashSet<string> { WebUntisReports.Origin },
-                editorListener);
+            reports = AddView();
+            if (WebViewFeature.IsFeatureSupported(WebViewFeature.WebMessageListener))
+            {
+                editorListener = new EditorListener(this);
+                WebViewCompat.AddWebMessageListener(reports, "FehlzeitenMxEditor", new HashSet<string> { WebUntisReports.Origin },
+                    editorListener);
+            }
+            SetLoginVisible(false);
         }
-        SetLoginVisible(false);
+        catch
+        {
+            Dispose();
+            throw;
+        }
     }
 
-    public string? Address => disposed || rendererGone ? null : reports.Url;
-    public string? LoginAddress => disposed || rendererGone ? null : (loginPopup ?? reports).Url;
+    private NativeWebView ReportWindow => !disposed && !rendererGone && reports is { } available
+        ? available : throw new InvalidOperationException(RendererMessage);
+    public string? Address => disposed || rendererGone ? null : reports?.Url;
+    public string? LoginAddress => disposed || rendererGone ? null : (loginPopup ?? reports)?.Url;
     public int MainStatus { get; private set; }
     public bool Navigating { get; private set; }
     public long NavigationRevision { get; private set; }
     public bool ShowingLogin { get; private set; }
     public bool RendererGone => rendererGone;
-    public string UserAgent => reports.Settings.UserAgentString ?? "";
+    public string UserAgent => ReportWindow.Settings.UserAgentString ?? "";
     public event Action<string?>? LoginAddressChanged;
     public event Action<string>? EditorMessage;
     public Export? PendingExport { get; set; }
 
     public void Go(string address)
     {
-        EnsureAvailable();
+        var web = ReportWindow;
         MainStatus = 0;
         Navigating = true;
         NavigationRevision++;
-        reports.StopLoading();
-        reports.LoadUrl(address);
+        web.StopLoading();
+        web.LoadUrl(address);
     }
 
     public void SetEditing(bool value) => editing = value;
 
     public void SetLoginVisible(bool visible)
     {
-        if (disposed || rendererGone) return;
+        if (disposed || rendererGone || reports is not { } web) return;
         ShowingLogin = visible;
         host.ImportantForAccessibility = visible ? ImportantForAccessibility.Auto : ImportantForAccessibility.NoHideDescendants;
         host.DescendantFocusability = visible ? DescendantFocusability.AfterDescendants : DescendantFocusability.BlockDescendants;
         if (visible)
         {
-            if (!editing) (loginPopup ?? reports).RequestFocus();
+            if (!editing) (loginPopup ?? web).RequestFocus();
         }
         else
         {
-            reports.ClearFocus();
+            web.ClearFocus();
             CloseLoginPopup();
         }
     }
 
     public bool GoBack()
     {
-        if (disposed || rendererGone) return false;
-        var view = loginPopup ?? reports;
+        if (disposed || rendererGone || (loginPopup ?? reports) is not { } view) return false;
         if (!view.CanGoBack())
         {
             if (loginPopup == null) return false;
@@ -96,22 +105,13 @@ internal sealed class MobileWebView : IDisposable
         return true;
     }
 
-    public Task<string> EvaluateAsync(string script, CancellationToken token)
-    {
-        EnsureAvailable();
-        return EvaluateAsync(reports, script, token);
-    }
+    public Task<string> EvaluateAsync(string script, CancellationToken token) => EvaluateWindowAsync(ReportWindow, script, token);
 
-    private void EnsureAvailable()
+    public async Task<bool> FitEditorOnOpenAsync(CancellationToken token)
     {
-        if (disposed || rendererGone) throw new InvalidOperationException(RendererMessage);
-    }
-
-    public async Task FitEditorOnOpenAsync(CancellationToken token)
-    {
-        if (!editing || disposed || rendererGone || !WebUntisReports.IsSchoolAddress(Address)) return;
+        var web = ReportWindow;
+        if (!editing || !WebUntisReports.IsSchoolAddress(Address)) return false;
         var revision = NavigationRevision;
-        var touched = false;
         const string fit = """
             (() => {
                 const editor = document.documentElement.fehlzeitenMxAbsenceEditor;
@@ -119,76 +119,71 @@ internal sealed class MobileWebView : IDisposable
                 return window.visualViewport.width / editor.dialog.getBoundingClientRect().width;
             })()
             """;
-        using var startup = CancellationTokenSource.CreateLinkedTokenSource(token);
-        startup.CancelAfter(TimeSpan.FromSeconds(1));
+        using var startup = CancellationTokenSource.CreateLinkedTokenSource(token, rendererLifetime.Token);
+        startup.CancelAfter(TimeSpan.FromSeconds(3));
         var startupToken = startup.Token;
-        reports.Touch += OnTouch;
         try
         {
-            // Wait through the first layout pass after the editor toolbar has resized the WebView.
-            var layout = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            reports.PostOnAnimation(new Java.Lang.Runnable(() =>
-            {
-                if (CanFit()) reports.PostOnAnimation(new Java.Lang.Runnable(() => layout.TrySetResult()));
-                else layout.TrySetResult();
-            }));
-            await Task.WhenAny(layout.Task, Task.Delay(120, startupToken));
-
-            // WebView can apply the new viewport scale after the first layout. Recheck during opening only.
+            var measured = false;
+            // Android may still apply its initial viewport scale after the layout pass.
             foreach (var delay in EditorFitDelays)
             {
-                if (!CanFit()) return;
                 await Task.Delay(delay, startupToken);
-                if (!CanFit()) return;
+                if (!CanFit()) return false;
                 var json = await EvaluateAsync(fit, startupToken);
-                if (!CanFit()) return;
+                if (!CanFit()) return false;
                 if (JsonNode.Parse(json) is JsonValue value && value.TryGetValue<double>(out var factor) &&
-                    double.IsFinite(factor) && factor > 0 && Math.Abs(factor - 1) > 0.01)
-                    reports.ZoomBy((float)Math.Clamp(factor, 0.01, 100));
+                    double.IsFinite(factor) && factor > 0)
+                {
+                    measured = true;
+                    if (Math.Abs(factor - 1) > 0.01) web.ZoomBy((float)Math.Clamp(factor, 0.01, 100));
+                }
             }
+            if (!measured || !CanFit()) return false;
+            var visualState = new EditorVisualState();
+            web.PostVisualStateCallback(revision, visualState);
+            try { await visualState.Ready.WaitAsync(TimeSpan.FromMilliseconds(600), startupToken); }
+            catch (TimeoutException) { } // The hidden WebView may defer drawing until the panel moves into view.
+            return CanFit();
         }
-        catch (Exception error) when (error is OperationCanceledException or TimeoutException or ObjectDisposedException or
-            System.Text.Json.JsonException or Java.Lang.Exception) { }
-        finally { if (!disposed) reports.Touch -= OnTouch; }
-
-        bool CanFit() => !startupToken.IsCancellationRequested && !touched && editing && !disposed && !rendererGone &&
-            NavigationRevision == revision;
-
-        void OnTouch(object? sender, global::Android.Views.View.TouchEventArgs args)
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
         {
-            touched = true;
-            args.Handled = false;
+            if (rendererGone || disposed) throw new InvalidOperationException(RendererMessage);
+            return false;
         }
+
+        bool CanFit() => !startupToken.IsCancellationRequested && editing && !disposed && !rendererGone &&
+            web.IsAttachedToWindow && NavigationRevision == revision;
     }
 
     public async Task<bool> TapAsync(double x, double y, CancellationToken token)
     {
         var json = await EvaluateAsync("({width: visualViewport.width, x: visualViewport.offsetLeft, y: visualViewport.offsetTop})", token);
         token.ThrowIfCancellationRequested();
-        EnsureAvailable();
+        var web = ReportWindow;
         if (JsonNode.Parse(json) is not JsonObject viewport) return false;
         var width = viewport["width"]?.GetValue<double>() ?? 0;
         if (width <= 0) return false;
-        var scale = reports.Width / width;
+        var scale = web.Width / width;
         var px = (float)((x - (viewport["x"]?.GetValue<double>() ?? 0)) * scale);
         var py = (float)((y - (viewport["y"]?.GetValue<double>() ?? 0)) * scale);
-        if (px < 0 || py < 0 || px >= reports.Width || py >= reports.Height) return false;
+        if (px < 0 || py < 0 || px >= web.Width || py >= web.Height) return false;
         token.ThrowIfCancellationRequested();
         var now = SystemClock.UptimeMillis();
         using var down = MotionEvent.Obtain(now, now, MotionEventActions.Down, px, py, MetaKeyStates.None);
         using var up = MotionEvent.Obtain(now, now, MotionEventActions.Up, px, py, MetaKeyStates.None);
         if (down == null || up == null) return false;
-        reports.DispatchTouchEvent(down);
-        reports.DispatchTouchEvent(up);
+        web.DispatchTouchEvent(down);
+        web.DispatchTouchEvent(up);
         return true;
     }
 
     private static async Task ResetProfileAsync()
     {
-        using var done = new JavascriptResult();
         var cookies = CookieManager.Instance;
         if (cookies != null)
         {
+            var done = new JavascriptResult();
             cookies.RemoveAllCookies(done);
             await done.Task.WaitAsync(TimeSpan.FromSeconds(8));
             cookies.Flush();
@@ -229,7 +224,7 @@ internal sealed class MobileWebView : IDisposable
             if (!current.Add((cookie.Name, cookie.Domain, cookie.Path))) continue;
             if (!canReadScopes && manager.GetCookie(WebUntisReports.Origin + cookie.Path)?.Split(';')
                 .Any(pair => pair.TrimStart().StartsWith(cookie.Name + "=", StringComparison.Ordinal)) == true) continue;
-            using var result = new JavascriptResult();
+            var result = new JavascriptResult();
             manager.SetCookie(WebUntisReports.Origin + "/", cookie.Header, result);
             await result.Task.WaitAsync(TimeSpan.FromSeconds(5), token);
         }
@@ -239,17 +234,36 @@ internal sealed class MobileWebView : IDisposable
     {
         CloseLoginPopup();
         Go("about:blank");
-        reports.ClearHistory();
-        reports.ClearCache(true);
+        var web = ReportWindow;
+        web.ClearHistory();
+        web.ClearCache(true);
         await ResetProfileAsync();
     }
 
-    internal static async Task<string> EvaluateAsync(NativeWebView view, string script, CancellationToken token)
+    internal async Task<string> EvaluateWindowAsync(NativeWebView view, string script, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        using var result = new JavascriptResult();
+        CheckWindow();
+        using var pending = CancellationTokenSource.CreateLinkedTokenSource(token, rendererLifetime.Token);
+        // Android retains callbacks that can still arrive after a cancelled or timed-out wait.
+        var result = new JavascriptResult();
         view.EvaluateJavascript(script, result);
-        return await result.Task.WaitAsync(TimeSpan.FromSeconds(6), token);
+        try
+        {
+            var json = await result.Task.WaitAsync(TimeSpan.FromSeconds(6), pending.Token);
+            CheckWindow();
+            return json;
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested && rendererLifetime.IsCancellationRequested)
+        {
+            throw new InvalidOperationException(RendererMessage);
+        }
+
+        void CheckWindow()
+        {
+            if (disposed || rendererGone || !listeners.ContainsKey(view))
+                throw new InvalidOperationException(RendererMessage);
+        }
     }
 
     private NativeWebView AddView()
@@ -285,7 +299,6 @@ internal sealed class MobileWebView : IDisposable
     {
         if (loginPopup == null) return;
         RemoveView(loginPopup);
-        loginPopup = null;
         LoginAddressChanged?.Invoke(LoginAddress);
     }
 
@@ -297,8 +310,10 @@ internal sealed class MobileWebView : IDisposable
 
     private void RemoveView(NativeWebView view)
     {
-        windows.Remove(view);
         if (!listeners.Remove(view, out var listener)) return;
+        PendingExport?.Windows.Remove(view);
+        if (ReferenceEquals(view, loginPopup)) loginPopup = null;
+        if (ReferenceEquals(view, reports)) reports = null;
         if (!rendererGone)
         {
             view.SetDownloadListener(null);
@@ -314,13 +329,14 @@ internal sealed class MobileWebView : IDisposable
     {
         if (disposed) return;
         disposed = true;
+        rendererLifetime.Cancel();
         if (editorListener != null)
         {
-            if (!rendererGone) WebViewCompat.RemoveWebMessageListener(reports, "FehlzeitenMxEditor");
-            editorListener.Dispose();
+            if (!rendererGone && reports is { } web) WebViewCompat.RemoveWebMessageListener(web, "FehlzeitenMxEditor");
         }
-        foreach (var popup in windows.ToArray()) RemoveView(popup);
-        RemoveView(reports);
+        foreach (var web in listeners.Keys.ToArray()) RemoveView(web);
+        editorListener?.Dispose();
+        rendererLifetime.Dispose();
         chrome.Dispose();
         client.Dispose();
     }
@@ -363,7 +379,7 @@ internal sealed class MobileWebView : IDisposable
     {
         try
         {
-            var json = await EvaluateAsync(view, """
+            var json = await EvaluateWindowAsync(view, """
                 (() => {
                     if (location.origin !== EXPECTED_ORIGIN) return null;
                     const text = (document.body?.innerText ?? "").trim();
@@ -396,7 +412,7 @@ internal sealed class MobileWebView : IDisposable
             }
         }
         catch (Exception error) when (error is OperationCanceledException or TimeoutException or System.Text.Json.JsonException or
-            ObjectDisposedException or Java.Lang.Exception) { }
+            InvalidOperationException or Java.Lang.Exception) { }
     }
 
     private sealed class BrowserClient(MobileWebView owner) : WebViewClient
@@ -422,14 +438,20 @@ internal sealed class MobileWebView : IDisposable
 
         public override bool OnRenderProcessGone(NativeWebView? view, RenderProcessGoneDetail? detail)
         {
+            if (view == null || owner.disposed) return true;
             if (owner.PendingExport is { } export)
                 export.Error = RendererMessage;
-            var crashed = OperatingSystem.IsAndroidVersionAtLeast(26) && detail?.DidCrash() == true;
-            global::Android.Util.Log.Warn("FehlzeitenMX", crashed ? "WebView-Renderer abgestürzt." : "WebView-Renderer beendet.");
-            owner.rendererGone = true;
-            owner.MainStatus = 503;
-            owner.Navigating = false;
-            if (!owner.disposed) owner.host.RemoveAllViews();
+            if (!owner.rendererGone)
+            {
+                var crashed = OperatingSystem.IsAndroidVersionAtLeast(26) && detail?.DidCrash() == true;
+                global::Android.Util.Log.Warn("FehlzeitenMX", crashed ? "WebView-Renderer abgestürzt." : "WebView-Renderer beendet.");
+                owner.rendererGone = true;
+                owner.MainStatus = 503;
+                owner.Navigating = false;
+                owner.rendererLifetime.Cancel();
+            }
+            // Android calls this for every affected WebView, including popups sharing the renderer.
+            owner.RemoveView(view);
             return true;
         }
     }
@@ -444,7 +466,6 @@ internal sealed class MobileWebView : IDisposable
                 (export == null && (!owner.ShowingLogin || !isUserGesture))) return false;
             if (export == null && owner.loginPopup != null) return false;
             var popup = owner.AddView();
-            owner.windows.Add(popup);
             if (export == null)
             {
                 owner.loginPopup = popup;
@@ -454,7 +475,7 @@ internal sealed class MobileWebView : IDisposable
             {
                 export.Windows.Add(popup);
                 // Keep the report editor above invisible report windows so input goes to its form.
-                owner.reports.BringToFront();
+                owner.reports?.BringToFront();
             }
             transport.WebView = popup;
             resultMsg.SendToTarget();
@@ -463,7 +484,7 @@ internal sealed class MobileWebView : IDisposable
 
         public override void OnCloseWindow(NativeWebView? window)
         {
-            if (window == null || !owner.windows.Contains(window)) return;
+            if (window == null || ReferenceEquals(window, owner.reports) || !owner.listeners.ContainsKey(window)) return;
             if (ReferenceEquals(window, owner.loginPopup)) owner.CloseLoginPopup();
             else if (owner.PendingExport is not { } export || !export.Windows.Contains(window)) owner.RemoveView(window);
         }
@@ -495,7 +516,7 @@ internal sealed class MobileWebView : IDisposable
         public void OnPostMessage(NativeWebView? view, WebMessageCompat? message, global::Android.Net.Uri? sourceOrigin,
             bool isMainFrame, JavaScriptReplyProxy? replyProxy)
         {
-            if (owner.editing && isMainFrame && sourceOrigin?.ToString() == WebUntisReports.Origin &&
+            if (!owner.disposed && !owner.rendererGone && owner.editing && isMainFrame && sourceOrigin?.ToString() == WebUntisReports.Origin &&
                 message?.Type == WebMessageCompat.TypeString && message.Data is { Length: <= 256 } data)
                 owner.EditorMessage?.Invoke(data);
         }
@@ -507,7 +528,8 @@ internal sealed class MobileWebView : IDisposable
         public void OnDownloadStart(string? url, string? userAgent, string? contentDisposition, string? mimeType, long contentLength)
         {
             var export = owner.PendingExport;
-            if (export == null || !WebUntisReports.IsSchoolAddress(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
+            if (owner.disposed || owner.rendererGone || export == null || !WebUntisReports.IsSchoolAddress(url) ||
+                !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
             if (!WebUntisReports.IsReadyCsvLink(url) && !WebUntisReports.IsReportRoute(uri) &&
                 !uri.AbsolutePath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) && uri.Scheme != "blob") return;
             if (contentLength > CsvReport.MaxFileBytes)
@@ -525,6 +547,13 @@ internal sealed class MobileWebView : IDisposable
         private readonly TaskCompletionSource<string> value = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<string> Task => value.Task;
         public void OnReceiveValue(Java.Lang.Object? result) => value.TrySetResult(result?.ToString() ?? "null");
+    }
+
+    private sealed class EditorVisualState : NativeWebView.VisualStateCallback
+    {
+        private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task Ready => ready.Task;
+        public override void OnComplete(long requestId) => ready.TrySetResult();
     }
 
     internal sealed class Export(CancellationToken token)
