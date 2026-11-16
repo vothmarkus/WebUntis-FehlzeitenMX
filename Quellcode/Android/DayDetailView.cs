@@ -4,21 +4,26 @@ using static WebUntisAuswertung.Mobile.MobileStyle;
 
 namespace WebUntisAuswertung.Mobile;
 
-internal sealed class DayDetailPage : ContentPage
+internal sealed class DayDetailView : ContentView
 {
-    public DayDetailPage(string name, DateOnly day, DayCell cell, DayDetails detail, Func<Task>? openExcuse)
+    private readonly Button? excuse;
+    private readonly ActivityIndicator? openingExcuse;
+
+    public DayDetailView(string name, DateOnly day, DayCell cell, DayDetails detail, bool canEdit)
     {
-        SafeAreaEdges = SafeAreaEdges.All;
         BackgroundColor = Surface;
         var close = ActionButton("×", "Schließen");
         var dayLabel = MobileStyle.Label(day.ToString("dddd, dd.MM.yyyy", CultureInfo.GetCultureInfo("de-DE")), 13, Muted);
         var actions = new HorizontalStackLayout { Spacing = 8, VerticalOptions = LayoutOptions.Start };
-        close.Clicked += async (_, _) => await CloseAsync();
-        if (openExcuse != null)
+        close.Clicked += (_, _) => CloseRequested?.Invoke();
+        if (canEdit)
         {
-            var excuse = ActionButton("✎", "Entschuldigung bearbeiten", primary: true);
-            excuse.Clicked += async (_, _) => await CloseAsync(openExcuse);
-            actions.Add(excuse);
+            excuse = ActionButton("✎", "Entschuldigung bearbeiten", primary: true);
+            excuse.Clicked += (_, _) => ExcuseRequested?.Invoke();
+            openingExcuse = new ActivityIndicator { Color = Accent, WidthRequest = 24, HeightRequest = 24, IsVisible = false };
+            openingExcuse.HorizontalOptions = openingExcuse.VerticalOptions = LayoutOptions.Center;
+            SemanticProperties.SetDescription(openingExcuse, "Entschuldigungsformular wird geöffnet");
+            actions.Add(new Grid { WidthRequest = 44, HeightRequest = 44, Children = { excuse, openingExcuse } });
         }
         actions.Add(close);
         var header = new Grid { ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) }, ColumnSpacing = 8 };
@@ -50,29 +55,30 @@ internal sealed class DayDetailPage : ContentPage
                 if (value.Length > 0) row.Children.Add(MobileStyle.Label($"{field} · {value}", 14));
             }
         }
-        var layout = new Grid
+        var scroll = new ScrollView { Content = entries };
+        var layout = new SwipeGrid
         {
+            Directions = SwipeDirection.Down,
+            Threshold = 56,
+            CanStartSwipe = point => point.Y < scroll.Y || scroll.ScrollY < 1,
             RowDefinitions = { new(GridLength.Auto), new(GridLength.Star) },
             Padding = new Thickness(14, 8, 14, 14),
             RowSpacing = 14
         };
+        layout.Swiped += _ => CloseRequested?.Invoke();
         layout.Add(header);
-        layout.Add(new ScrollView { Content = entries }, 0, 1);
+        layout.Add(scroll, 0, 1);
         Content = layout;
+    }
 
-        async Task CloseAsync(Func<Task>? next = null)
-        {
-            if (!actions.IsEnabled || Navigation.ModalStack.LastOrDefault() != this) return;
-            actions.IsEnabled = false;
-            Page? page;
-            try { page = await Navigation.PopModalAsync(animated: next == null); }
-            catch (InvalidOperationException)
-            {
-                actions.IsEnabled = true;
-                return;
-            }
-            if (page == this && next != null) await next();
-        }
+    public event Action? CloseRequested;
+    public event Action? ExcuseRequested;
+
+    public void SetOpeningExcuse(bool opening)
+    {
+        if (excuse == null || openingExcuse == null) return;
+        excuse.IsVisible = !opening;
+        openingExcuse.IsVisible = openingExcuse.IsRunning = opening;
     }
 
     private static Button ActionButton(string symbol, string description, bool primary = false)

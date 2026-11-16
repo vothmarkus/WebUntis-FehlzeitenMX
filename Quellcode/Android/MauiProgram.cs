@@ -24,6 +24,7 @@ internal static class MauiProgram
         {
             handlers.AddHandler<BrowserSurface, BrowserSurfaceHandler>();
             handlers.AddHandler<MatrixCanvas, MatrixCanvasHandler>();
+            handlers.AddHandler<SwipeGrid, SwipeGridHandler>();
         })
         .Build();
 }

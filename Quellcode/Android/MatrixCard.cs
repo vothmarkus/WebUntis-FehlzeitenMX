@@ -24,10 +24,13 @@ internal sealed class MatrixCard : ContentView
 
     public AttendanceMatrix? Matrix { get; private set; }
     public bool IsFromDevice => fromDevice;
+    public bool HasHeading => header.IsVisible;
     public event Action<AttendanceMatrix, Student, DateOnly, DayCell>? DaySelected;
     public event Action<AttendanceMatrix, Student, DateOnly, DayCell>? AbsenceRequested;
     public event Action<AttendanceMatrix>? NotesRequested;
     public event Action<float, bool>? VerticalScrolled;
+    public event Action? FitsVerticallyAfterZoom;
+    public event Action<SwipeDirection>? HeadingSwiped;
     public event Action<int>? AdjacentRequested;
     public event Action<float>? CardDragged;
     public event Action<int?>? CardDragEnded;
@@ -47,6 +50,7 @@ internal sealed class MatrixCard : ContentView
             if (Matrix is { } current) AbsenceRequested?.Invoke(current, student, day, cell);
         };
         canvas.VerticalScrolled += (distance, atTop) => VerticalScrolled?.Invoke(distance, atTop);
+        canvas.FitsVerticallyAfterZoom += () => FitsVerticallyAfterZoom?.Invoke();
         canvas.CardDragged += distance => CardDragged?.Invoke(distance);
         canvas.CardDragEnded += direction => CardDragEnded?.Invoke(direction);
 
@@ -65,12 +69,11 @@ internal sealed class MatrixCard : ContentView
             var pick = new TapGestureRecognizer();
             pick.Tapped += (_, _) => ClassPickerRequested?.Invoke();
             heading.GestureRecognizers.Add(pick);
-            var swipe = new SwipeGestureRecognizer { Direction = SwipeDirection.Left | SwipeDirection.Right, Threshold = 40 };
-            swipe.Swiped += (_, args) => AdjacentRequested?.Invoke(args.Direction == SwipeDirection.Left ? 1 : -1);
-            heading.GestureRecognizers.Add(swipe);
         }
-        header = new Grid
+        var swipe = new SwipeGrid
         {
+            Directions = SwipeDirection.Up | SwipeDirection.Down |
+                (inDeck ? SwipeDirection.Left | SwipeDirection.Right : 0),
             ColumnSpacing = 4,
             RowSpacing = 2,
             RowDefinitions = { new(GridLength.Auto), new(GridLength.Auto) },
@@ -79,6 +82,13 @@ internal sealed class MatrixCard : ContentView
                 new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto), new(GridLength.Auto)
             }
         };
+        swipe.Swiped += direction =>
+        {
+            if (direction is SwipeDirection.Left or SwipeDirection.Right)
+                AdjacentRequested?.Invoke(direction == SwipeDirection.Left ? 1 : -1);
+            else HeadingSwiped?.Invoke(direction);
+        };
+        header = swipe;
         header.Add(previous);
         header.Add(heading, 1);
         header.Add(next, 2);

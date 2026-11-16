@@ -12,7 +12,7 @@ internal sealed partial class MatrixPage : ContentPage
     private const string ChooseClass = "Wähle eine Klasse.";
     private const string InitialUpdate = "Für diese Klasse liegt noch kein Datenstand vor.";
     private const string HeadingAnimation = "SlideHeading";
-    private const string BrowserAnimation = "SlideExcuseEditor";
+    private const string OverlayAnimation = "SlideOverlay";
     private static readonly GridLength BrowserToolbarHeight = new(62);
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
     private readonly BrowserSurface browser = new();
@@ -30,7 +30,12 @@ internal sealed partial class MatrixPage : ContentPage
     private readonly Button browserNext = MobileStyle.Button("Weiter", primary: true);
     private readonly Button browserClose = MobileStyle.Button("×");
     private readonly Grid workspace = new() { BackgroundColor = Surface };
-    private readonly Grid heading = new() { VerticalOptions = LayoutOptions.Start };
+    private readonly Grid detailLayer = new() { IsVisible = false, BackgroundColor = Surface };
+    private readonly SwipeGrid heading = new()
+    {
+        Directions = SwipeDirection.Up | SwipeDirection.Down,
+        VerticalOptions = LayoutOptions.Start
+    };
     private readonly Grid headingHost = new() { IsClippedToBounds = true };
     private readonly Label sectionTitle = MobileStyle.Label("Meine Klassen", 12, Muted);
     private readonly Button menu = MobileStyle.Button("⋮");
@@ -57,6 +62,8 @@ internal sealed partial class MatrixPage : ContentPage
     private ClassSelection classSelection = ClassSelection.Load();
     private Section section;
     private AndroidReports? reports;
+    private DayDetailView? dayDetails;
+    private DayDetailView? excuseSource;
     private Student[] classes = [];
     private ReportRange? schoolYear;
     private ReportRange? selectedRange;
@@ -79,6 +86,8 @@ internal sealed partial class MatrixPage : ContentPage
     private bool menuOpen;
     private bool headingCollapsed;
     private bool browserVisible;
+    private bool browserTransition;
+    private bool detailTransition;
     private bool excuseVisible;
     private bool locked;
     private double headingHeight = 44;
@@ -87,6 +96,7 @@ internal sealed partial class MatrixPage : ContentPage
     private bool InteractiveTransferVisible => transfer != null && !preloadingAbsences;
     private bool VisibleTransfer => InteractiveTransferVisible || deckRefresh != null;
     private bool ControlsLocked => locked || ForegroundTransfer || restoring || changingSelection;
+    private bool ModalVisible => modalOpen || dayDetails != null;
 
     public MatrixPage()
     {
@@ -123,6 +133,7 @@ internal sealed partial class MatrixPage : ContentPage
         root = new Grid { IsClippedToBounds = true };
         root.Add(refreshBrowser);
         root.Add(workspace);
+        root.Add(detailLayer);
         root.Add(browserLayer);
         BuildWorkspace();
         BuildLogin();
@@ -177,6 +188,7 @@ internal sealed partial class MatrixPage : ContentPage
         SemanticProperties.SetDescription(menu, "Menü öffnen");
         SemanticProperties.SetDescription(refresh, "Aktualisieren");
         heading.ColumnSpacing = 7;
+        heading.Swiped += SwipeHeading;
         heading.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         heading.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         heading.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
@@ -238,13 +250,17 @@ internal sealed partial class MatrixPage : ContentPage
             if (excuseVisible) reports?.CloseExcuse();
             else CancelTransfer();
         };
-        var toolbar = new Grid
+        var toolbar = new SwipeGrid
         {
+            Directions = SwipeDirection.Down,
+            Threshold = 56,
+            CanStartSwipe = _ => excuseVisible && !browserTransition,
             Padding = new Thickness(8),
             ColumnSpacing = 8,
             ColumnDefinitions = { new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto), new(GridLength.Auto) },
             BackgroundColor = Surface
         };
+        toolbar.Swiped += _ => reports?.CloseExcuse();
         loginAddress.VerticalOptions = LayoutOptions.Center;
         loginAddress.LineBreakMode = LineBreakMode.TailTruncation;
         browserTitle.MaxLines = 1;
@@ -272,6 +288,11 @@ internal sealed partial class MatrixPage : ContentPage
         if (browserVisible)
         {
             if (browser.Browser?.GoBack() != true) CancelTransfer();
+            return true;
+        }
+        if (dayDetails != null)
+        {
+            _ = CloseDayDetailsAsync();
             return true;
         }
         if (!ForegroundTransfer) return base.OnBackButtonPressed();
@@ -372,14 +393,14 @@ internal sealed partial class MatrixPage : ContentPage
 
     private Task CheckSessionAsync()
     {
-        if (ControlsLocked || menuOpen || modalOpen || transfer != null || sessionReady ||
+        if (ControlsLocked || menuOpen || ModalVisible || transfer != null || sessionReady ||
             signInDismissed || classes.Length == 0 || Window == null) return Task.CompletedTask;
         return LoadClassesAsync(background: true);
     }
 
     private async Task ShowMenuAsync()
     {
-        if (ControlsLocked || menuOpen || modalOpen) return;
+        if (ControlsLocked || menuOpen || ModalVisible) return;
         string[] actions = ["▤  Meine Klassen", "▦  Tagesmatrix", "↓  Schüler-CSV speichern …", "⚙  Einstellungen"];
         menuOpen = true;
         int action;
@@ -420,7 +441,7 @@ internal sealed partial class MatrixPage : ContentPage
 
     private async Task ShowClassSettingsAsync()
     {
-        if (ControlsLocked || modalOpen || classes.Length == 0) return;
+        if (ControlsLocked || ModalVisible || classes.Length == 0) return;
         await ShowModalAsync(new ClassSelectionPage(classes, classSelection, ApplyClassSelectionAsync));
     }
 
@@ -458,7 +479,7 @@ internal sealed partial class MatrixPage : ContentPage
 
     private async Task ShowDeckPickerAsync()
     {
-        if (ControlsLocked || menuOpen || modalOpen) return;
+        if (ControlsLocked || menuOpen || ModalVisible) return;
         menuOpen = true;
         try
         {
@@ -616,7 +637,7 @@ internal sealed partial class MatrixPage : ContentPage
 
     private async Task ShowRangeAsync()
     {
-        if (ControlsLocked || modalOpen || schoolYear is not { } year) return;
+        if (ControlsLocked || ModalVisible || schoolYear is not { } year) return;
         await ShowModalAsync(new ReportRangePage(year, selectedRange ?? year.ThroughToday(), ApplyRangeAsync));
     }
 
@@ -644,8 +665,7 @@ internal sealed partial class MatrixPage : ContentPage
 
     private async Task PreloadActiveAbsencesAsync()
     {
-        if (!sessionReady || ControlsLocked || menuOpen || transfer != null ||
-            (modalOpen && Navigation.ModalStack.LastOrDefault() is not DayDetailPage) ||
+        if (!sessionReady || ControlsLocked || menuOpen || transfer != null || modalOpen ||
             ActiveCard?.Matrix is not { } matrix || !classSelection.Teachers.Contains(matrix.ClassId) ||
             reports?.HasPreparedAbsences(matrix) == true || !matrix.Cells.Values.Any(HasExcusableEntries)) return;
 
@@ -824,22 +844,48 @@ internal sealed partial class MatrixPage : ContentPage
         if (visible)
         {
             if (locked || Window == null) return;
+            var fromDetails = dayDetails != null && ReferenceEquals(dayDetails, excuseSource);
             excuseVisible = true;
+            browserTransition = true;
             browserTitle.Text = "WebUntis-Entschuldigung";
             browserBack.IsVisible = browserNext.IsVisible = false;
             SemanticProperties.SetDescription(browserClose, "Entschuldigungsformular schließen");
-            browserLayer.TranslationY = Math.Max(0, root.Height);
+            Apply(0);
             ShowBrowser(true);
-            await SlideBrowserAsync(entering: true);
-            browserLayer.InputTransparent = locked;
+            try { await SlideOverlayAsync(browserLayer, entering: true, Apply); }
+            finally
+            {
+                browserTransition = false;
+                if (fromDetails) HideDayDetails();
+                else UpdateOverlayInput();
+            }
+
+            void Apply(double progress)
+            {
+                if (fromDetails)
+                {
+                    var width = Math.Max(0, root.Width);
+                    browserLayer.TranslationX = width * (1 - progress);
+                    detailLayer.TranslationX = -width * progress;
+                }
+                else browserLayer.TranslationY = Math.Max(0, root.Height) * (1 - progress);
+            }
         }
         else if (excuseVisible)
         {
-            try { await SlideBrowserAsync(entering: false); }
+            browserTransition = true;
+            UpdateOverlayInput();
+            try
+            {
+                if (browser.Browser is { RendererGone: false })
+                    await SlideOverlayAsync(browserLayer, entering: false,
+                        progress => browserLayer.TranslationY = Math.Max(0, root.Height) * progress);
+            }
             finally
             {
                 ShowBrowser(false);
-                browserLayer.TranslationY = 0;
+                browserLayer.TranslationX = browserLayer.TranslationY = 0;
+                browserTransition = false;
                 excuseVisible = false;
                 browserTitle.Text = "WebUntis-Anmeldung";
                 browserBack.IsVisible = browserNext.IsVisible = true;
@@ -848,24 +894,19 @@ internal sealed partial class MatrixPage : ContentPage
         }
     }
 
-    private async Task SlideBrowserAsync(bool entering)
+    private async Task SlideOverlayAsync(VisualElement layer, bool entering, Action<double> apply)
     {
-        browserLayer.InputTransparent = true;
-        var end = entering ? 0.0 : 1.0;
-        if (!locked && Window != null && browserLayer.Handler != null && root.Height > 0 &&
-            browser.Browser is { RendererGone: false })
+        if (!locked && Window != null && layer.Handler != null && root.Height > 0)
         {
             var duration = entering ? 230u : 190u;
             var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            new Animation(Apply, 1 - end, end, entering ? Easing.CubicOut : Easing.CubicIn)
-                .Commit(browserLayer, BrowserAnimation, length: duration, finished: (_, _) => finished.TrySetResult());
+            new Animation(apply, easing: entering ? Easing.CubicOut : Easing.CubicIn)
+                .Commit(layer, OverlayAnimation, length: duration, finished: (_, _) => finished.TrySetResult());
             try { await finished.Task.WaitAsync(TimeSpan.FromMilliseconds(duration + 250), lifetime.Token); }
-            catch (TimeoutException) { browserLayer.AbortAnimation(BrowserAnimation); }
-            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { browserLayer.AbortAnimation(BrowserAnimation); }
+            catch (TimeoutException) { layer.AbortAnimation(OverlayAnimation); }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { layer.AbortAnimation(OverlayAnimation); }
         }
-        Apply(end);
-
-        void Apply(double offset) => browserLayer.TranslationY = offset * Math.Max(0, root.Height);
+        apply(1);
     }
 
     private void ShowBrowser(bool visible)
@@ -875,11 +916,19 @@ internal sealed partial class MatrixPage : ContentPage
         if (visible) UpdateLoginAddress(browser.Browser?.LoginAddress);
         // Keep the WebView attached and measured so fitting doesn't depend on the panel becoming visible.
         browserLayer.Opacity = visible ? 1 : 0;
-        browserLayer.InputTransparent = !visible;
-        workspace.InputTransparent = visible;
-        AutomationProperties.SetExcludedWithChildren(workspace, visible);
-        AutomationProperties.SetExcludedWithChildren(browserLayer, !visible);
+        UpdateOverlayInput();
         browser.Browser?.SetLoginVisible(visible);
+    }
+
+    private void UpdateOverlayInput()
+    {
+        var detailsVisible = dayDetails != null && !browserVisible;
+        workspace.InputTransparent = dayDetails != null || browserVisible;
+        detailLayer.InputTransparent = !detailsVisible || detailTransition;
+        browserLayer.InputTransparent = !browserVisible || browserTransition;
+        AutomationProperties.SetExcludedWithChildren(workspace, workspace.InputTransparent);
+        AutomationProperties.SetExcludedWithChildren(detailLayer, !detailsVisible);
+        AutomationProperties.SetExcludedWithChildren(browserLayer, !browserVisible);
     }
 
     private void SizeBrowser()
@@ -918,14 +967,22 @@ internal sealed partial class MatrixPage : ContentPage
 
     private MatrixCard CreateDeckCard() => CreateMatrixCard(inDeck: true);
 
-    private async Task OpenCellExcuseAsync(MatrixCard card, AttendanceMatrix matrix, Student student, DateOnly day)
+    private async Task OpenCellExcuseAsync(MatrixCard card, AttendanceMatrix matrix, Student student, DateOnly day,
+        DayDetailView? source = null)
     {
         if (ControlsLocked || menuOpen || modalOpen || editingClassId != null ||
             !classSelection.Teachers.Contains(matrix.ClassId) || !IsCurrent()) return;
         editingClassId = matrix.ClassId;
+        excuseSource = source;
+        source?.SetOpeningExcuse(true);
         editRevisions[matrix.ClassId] = editRevisions.GetValueOrDefault(matrix.ClassId) + 1;
         try { await RunAsync(EditAsync); }
-        finally { editingClassId = null; }
+        finally
+        {
+            if (ReferenceEquals(source, dayDetails)) source?.SetOpeningExcuse(false);
+            excuseSource = null;
+            editingClassId = null;
+        }
 
         async Task EditAsync(AndroidReports service, IProgress<string> progress, CancellationToken token)
         {
@@ -984,7 +1041,8 @@ internal sealed partial class MatrixPage : ContentPage
             status.Text = $"{choice.Name} · Aktuelle Fehlzeiten aus WebUntis geladen";
         }
 
-        bool IsCurrent() => ReferenceEquals(card, ActiveCard) && ReferenceEquals(card.Matrix, matrix);
+        bool IsCurrent() => !detailTransition && ReferenceEquals(source, dayDetails) &&
+            ReferenceEquals(card, ActiveCard) && ReferenceEquals(card.Matrix, matrix);
     }
 
     private static bool HasExcusableEntries(DayCell cell) =>
@@ -992,21 +1050,69 @@ internal sealed partial class MatrixPage : ContentPage
 
     private async Task ShowDayDetailsAsync(MatrixCard card, string studentId, DateOnly day)
     {
-        if (ControlsLocked || modalOpen || menuOpen || !ReferenceEquals(card, ActiveCard) || card.Matrix is not { } matrix ||
+        if (ControlsLocked || ModalVisible || browserVisible || menuOpen || Window == null ||
+            !ReferenceEquals(card, ActiveCard) || card.Matrix is not { } matrix ||
             matrix.Students.FirstOrDefault(student => student.Id == studentId) is not { } person ||
             !matrix.Cells.TryGetValue((studentId, day), out var cell)) return;
 
         var detail = DayDetails.Create(person, day, cell, matrix.SchoolPeriods);
         var canEdit = classSelection.Teachers.Contains(matrix.ClassId) && HasExcusableEntries(cell);
-        await ShowModalAsync(new DayDetailPage(person.Name, day, cell, detail, canEdit ? OpenFromDetailsAsync : null));
+        var view = new DayDetailView(person.Name, day, cell, detail, canEdit);
+        view.CloseRequested += async () =>
+        {
+            if (ReferenceEquals(view, dayDetails)) await CloseDayDetailsAsync();
+        };
+        view.ExcuseRequested += async () => await OpenFromDetailsAsync();
+        dayDetails = view;
+        detailTransition = true;
+        detailLayer.Add(view);
+        detailLayer.TranslationY = Math.Max(0, root.Height);
+        detailLayer.IsVisible = true;
+        UpdateOverlayInput();
+        try
+        {
+            await SlideOverlayAsync(detailLayer, entering: true,
+                progress => detailLayer.TranslationY = Math.Max(0, root.Height) * (1 - progress));
+        }
+        finally
+        {
+            detailTransition = false;
+            UpdateOverlayInput();
+        }
         if (canEdit) ScheduleAbsencePreload();
 
         async Task OpenFromDetailsAsync()
         {
             if (!ReferenceEquals(card, ActiveCard) || card.Matrix is not { } current || current.ClassId != matrix.ClassId ||
                 current.Students.FirstOrDefault(student => student.Id == studentId) is not { } selected) return;
-            await OpenCellExcuseAsync(card, current, selected, day);
+            await OpenCellExcuseAsync(card, current, selected, day, view);
         }
+    }
+
+    private async Task CloseDayDetailsAsync()
+    {
+        if (locked || dayDetails == null || detailTransition || browserVisible) return;
+        if (ReferenceEquals(dayDetails, excuseSource)) transfer?.Cancel();
+        detailTransition = true;
+        UpdateOverlayInput();
+        try
+        {
+            await SlideOverlayAsync(detailLayer, entering: false,
+                progress => detailLayer.TranslationY = Math.Max(0, root.Height) * progress);
+        }
+        finally { HideDayDetails(); }
+        ScheduleAbsencePreload();
+    }
+
+    private void HideDayDetails()
+    {
+        detailLayer.IsVisible = false;
+        dayDetails?.SetOpeningExcuse(false);
+        detailLayer.Clear();
+        detailLayer.TranslationX = detailLayer.TranslationY = 0;
+        dayDetails = null;
+        detailTransition = false;
+        UpdateOverlayInput();
     }
 
     private MatrixCard CreateMatrixCard(bool inDeck = false)
@@ -1016,8 +1122,16 @@ internal sealed partial class MatrixPage : ContentPage
         card.AbsenceRequested += async (matrix, student, day, _) => await OpenCellExcuseAsync(card, matrix, student, day);
         card.NotesRequested += async data =>
         {
-            if (!ControlsLocked && !menuOpen && !modalOpen)
+            if (!ControlsLocked && !menuOpen && !ModalVisible)
                 await NoticeAsync("Abrufhinweise", string.Join(Environment.NewLine + Environment.NewLine, data.Notes));
+        };
+        card.HeadingSwiped += direction =>
+        {
+            if (ReferenceEquals(card, ActiveCard)) SwipeHeading(direction);
+        };
+        card.FitsVerticallyAfterZoom += () =>
+        {
+            if (ReferenceEquals(card, ActiveCard)) SetHeadingCollapsed(false);
         };
         card.VerticalScrolled += (distance, atTop) =>
         {
@@ -1030,7 +1144,7 @@ internal sealed partial class MatrixPage : ContentPage
 
     private async Task ShowModalAsync(ContentPage page)
     {
-        if (locked || modalOpen || Window == null) return;
+        if (locked || ModalVisible || Window == null) return;
         modalOpen = true;
         page.Disappearing += (_, _) => modalOpen = false;
         try { await Navigation.PushModalAsync(page); }
@@ -1100,6 +1214,13 @@ internal sealed partial class MatrixPage : ContentPage
     }
 
     private MatrixCard? ActiveCard => section == Section.Classes ? deck.Active?.Card : matrixCard;
+
+    private void SwipeHeading(SwipeDirection direction)
+    {
+        if (locked || ModalVisible || browserVisible) return;
+        if (direction == SwipeDirection.Down) SetHeadingCollapsed(false);
+        else if (ActiveCard is { HasHeading: true }) SetHeadingCollapsed(true);
+    }
 
     private void ShowHeadingIfNoMatrix()
     {

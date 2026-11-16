@@ -69,6 +69,9 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
             if (args.Status == GestureStatus.Started) panX = panY = 0;
             if (args.Status == GestureStatus.Running)
                 SetZoom(zoom * (float)args.Scale, args.ScaleOrigin);
+            else if (args.Status is GestureStatus.Completed or GestureStatus.Canceled && height > 0 && MaxY < 1 &&
+                matrix is { Days.Length: > 0, Students.Length: > 0 })
+                FitsVerticallyAfterZoom?.Invoke();
         };
         GestureRecognizers.Add(pan);
         GestureRecognizers.Add(tap);
@@ -87,6 +90,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     public event Action<Student, DateOnly, DayCell>? DaySelected;
     public event Action<Student, DateOnly, DayCell>? AbsenceRequested;
     public event Action<float, bool>? VerticalScrolled;
+    public event Action? FitsVerticallyAfterZoom;
     public event Action<float>? CardDragged;
     public event Action<int?>? CardDragEnded;
     internal AttendanceMatrix? CurrentMatrix => matrix;
