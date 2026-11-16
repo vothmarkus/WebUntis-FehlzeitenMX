@@ -372,7 +372,7 @@ internal sealed partial class MatrixPage : ContentPage
     private async Task ShowMenuAsync()
     {
         if (ControlsLocked || menuOpen || modalOpen) return;
-        string[] actions = ["▤  Meine Klassen", "▦  Tagesmatrix", "↓  Notenrechner-CSV speichern …", "⚙  Einstellungen"];
+        string[] actions = ["▤  Meine Klassen", "▦  Tagesmatrix", "↓  Schüler-CSV speichern …", "⚙  Einstellungen"];
         menuOpen = true;
         int action;
         try { action = await ChooseAsync("Fehlzeiten MX", actions); }

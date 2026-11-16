@@ -55,15 +55,16 @@ internal sealed class MatrixCanvasHandler : GraphicsViewHandler
                     break;
                 case MotionEventActions.Up:
                     CancelPress();
+                    var dragged = cardGesture == CardGesture.Horizontal;
                     var dispatched = base.DispatchTouchEvent(motion);
                     EndCardGesture(motion);
-                    return dispatched;
+                    return dispatched || dragged;
                 default:
                     CancelPress();
                     EndCardGesture();
                     break;
             }
-            return base.DispatchTouchEvent(motion);
+            return base.DispatchTouchEvent(motion) || cardGesture != CardGesture.None;
         }
 
         protected override void OnDetachedFromWindow()

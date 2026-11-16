@@ -10,7 +10,7 @@ internal sealed partial class MatrixPage
         var selectedClasses = deck.Entries.Select(entry => entry.Class).ToArray();
         if (selectedClasses.Length == 0 || schoolYear is not { } year)
         {
-            await NoticeAsync("Notenrechner-CSV", "Wähle unter Meine Klassen mindestens eine Klasse aus.");
+            await NoticeAsync("Schüler-CSV", "Wähle unter Meine Klassen mindestens eine Klasse aus.");
             return;
         }
 
@@ -45,7 +45,7 @@ internal sealed partial class MatrixPage
         });
         if (!completed || locked || csv == null || Platform.CurrentActivity is not MainActivity activity) return;
 
-        var name = $"Notenrechner-Schuelerliste-{SchoolYears.Label(startYear).Replace('/', '-')}.csv";
+        var name = $"Schuelerliste-{SchoolYears.Label(startYear).Replace('/', '-')}.csv";
         try
         {
             status.Text = "Speicherort für die CSV auswählen …";

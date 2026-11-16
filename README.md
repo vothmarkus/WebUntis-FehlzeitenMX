@@ -22,11 +22,11 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Testversion 0.6.11
+## Android-Version 0.6.12
 
-Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die Test-APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
+Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-**Fehlzeiten MX Test** hat eine eigene App-ID und lässt sich parallel zur bisherigen App installieren. Für ein direktes Update ist derselbe Signierschlüssel wie bei der installierten App erforderlich.
+Die reguläre App heißt **WebUntis-FehlzeitenMX**. Beim Wechsel von 0.6.10 oder älter ist wegen des neuen Signierschlüssels einmalig eine Neuinstallation nötig. Melde dich danach bei WebUntis an und wähle deine Klassen.
 
 Unter **⋮ → Einstellungen** findest du **Anmeldung**, **Klassenauswahl**, **Legende**, **App-Update** und **Impressum**. **App-Update** sucht beim Öffnen der Einstellungen nach Android-Releases auf GitHub. Wenn eine neuere ARM64-Version verfügbar ist, lädt die App die APK auf Wunsch, prüft sie und öffnet die Android-Installation. Bestätige dort das Update. Android kann beim ersten In-App-Update nach der Installationsfreigabe für Fehlzeiten MX fragen.
 
@@ -44,7 +44,7 @@ Tippe für die Tagesdetails auf eine Zelle und oben rechts auf **×** zum Schlie
 
 Vollständige Matrizen der gewählten Klassen und die Klassenliste werden mit AES-256-GCM verschlüsselt auf dem Gerät gespeichert. Der Schlüssel liegt im Android Keystore. Beim Öffnen sind die gespeicherten Matrizen auch offline mit Datum und Uhrzeit des Abrufs verfügbar. In einer aktiven WebUntis-Sitzung aktualisiert die App ihre Klassen alle fünf Minuten im Hintergrund, auch während du Entschuldigungen bearbeitest. Nach dem Schließen des Entschuldigungsformulars landest du in der Matrix. Über **↻** kannst du sofort aktualisieren und dich bei Bedarf erneut anmelden. Die Statuszeile zeigt den Abruffortschritt. Ein unvollständiger Abruf lässt den letzten vollständigen Stand bestehen.
 
-Über **⋮ → Notenrechner-CSV speichern …** exportierst du die vollständigen Schülerlisten aller ausgewählten Klassen. Die Datei hat dasselbe Format wie unter Windows. Bei fehlender E-Mail enthält die Zeile die WebUntis-ID. Den Speicherort wählst du im Android-Dateidialog.
+Über **⋮ → Schüler-CSV speichern …** exportierst du die vollständigen Schülerlisten aller ausgewählten Klassen. Die Datei hat dasselbe Format wie unter Windows. Bei fehlender E-Mail enthält die Zeile die WebUntis-ID. Den Speicherort wählst du im Android-Dateidialog.
 
 **Abmelden** unter **Einstellungen → Anmeldung** löscht die lokal gespeicherte Sitzung, die Matrizen und die Klassenliste. Entschuldigungen sind in den Tagesdetails lesbar.
 

@@ -17,6 +17,7 @@ internal sealed class MatrixDeck : ContentView
     private MatrixCard? preview;
     private int dragDirection;
     private double dragProgress;
+    private int transition;
     private bool settling;
 
     public IReadOnlyList<Entry> Entries => entries;
@@ -137,9 +138,16 @@ internal sealed class MatrixDeck : ContentView
             Finish();
             return;
         }
-        settling = front.InputTransparent = true;
-        new Animation(ApplyFrame, dragProgress, end, CardEasing).Commit(front, CardAnimation,
-            length: 160, finished: (_, cancelled) => { if (!cancelled) Finish(); });
+        settling = true;
+        var running = ++transition;
+        new Animation(progress =>
+        {
+            if (running == transition) ApplyFrame(progress);
+        }, dragProgress, end, CardEasing).Commit(front, CardAnimation, length: 160, finished: (_, _) =>
+        {
+            // Android may interrupt the animation. The gesture has already chosen the target card.
+            if (running == transition) Finish();
+        });
 
         void Finish()
         {
@@ -152,11 +160,12 @@ internal sealed class MatrixDeck : ContentView
 
     private void Present()
     {
+        transition++;
+        settling = false;
         front.AbortAnimation(CardAnimation);
         preview = null;
         dragDirection = 0;
         dragProgress = 0;
-        settling = front.InputTransparent = false;
         var depth = Math.Min(2, Math.Max(0, entries.Length - 1));
         var offset = depth * 5;
         near.IsVisible = depth >= 1;

@@ -6,7 +6,7 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class MatrixCanvas : GraphicsView, IDrawable
 {
-    private const float CardSwipeEdge = 24;
+    private const float CardSwipeEdge = 36;
     private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
     private readonly bool inDeck;
     private float zoom = 1;
