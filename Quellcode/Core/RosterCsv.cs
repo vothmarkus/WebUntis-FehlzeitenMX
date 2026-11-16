@@ -1,29 +1,16 @@
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using WebUntisAuswertung.Core;
 
-namespace WebUntisAuswertung;
+namespace WebUntisAuswertung.Core;
 
 internal sealed record RosterEmail(string Given, string Family, string ClassName, string UntisId, string Email);
+internal sealed record LessonEmailBatch(RosterEmail[] Emails, int Read, int Total, string? Failure);
 
 internal static class RosterCsv
 {
-    private static readonly Guid DownloadsFolderId = new("374DE290-123F-4565-9164-39C4925E467B");
+    public static readonly Encoding Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
     private static readonly Regex SchoolEmail = new(@"^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,63}$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
-    public static string DownloadsFolder()
-    {
-        var id = DownloadsFolderId;
-        var result = SHGetKnownFolderPath(ref id, 0, IntPtr.Zero, out var pointer);
-        try
-        {
-            if (result >= 0 && Marshal.PtrToStringUni(pointer) is { Length: > 0 } path) return path;
-        }
-        finally { Marshal.FreeCoTaskMem(pointer); }
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-    }
 
     public static (string Content, int EmailCount) Format(IReadOnlyList<(string ClassName, Student Student)> roster, int year,
         IEnumerable<RosterEmail> contacts)
@@ -150,28 +137,10 @@ internal static class RosterCsv
 
     private static bool IsFamilyConnector(string word) => word.ToLowerInvariant() is "der" or "den" or "dem" or "het" or "las" or "los" or "d." or "'t" or "’t";
 
-    public static async Task SaveAsync(string path, string csv, CancellationToken token)
-    {
-        var temporary = Path.Combine(Path.GetDirectoryName(path)!, $".Schuelernamen-{Guid.NewGuid():N}.tmp");
-        try
-        {
-            await File.WriteAllTextAsync(temporary, csv, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), token);
-            token.ThrowIfCancellationRequested();
-            File.Move(temporary, path, overwrite: true);
-        }
-        finally
-        {
-            try { File.Delete(temporary); }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
-        }
-    }
-
     private static string Quote(string value)
     {
         if (value.TrimStart() is [var first, ..] && first is '=' or '+' or '-' or '@') value = "'" + value;
         return '"' + value.Replace("\"", "\"\"") + '"';
     }
 
-    [DllImport("shell32.dll", ExactSpelling = true)]
-    private static extern int SHGetKnownFolderPath(ref Guid rfid, uint flags, IntPtr token, out IntPtr path);
 }

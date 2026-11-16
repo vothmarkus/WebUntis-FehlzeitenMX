@@ -5,7 +5,7 @@ using NativeDialog = Android.App.AlertDialog;
 
 namespace WebUntisAuswertung.Mobile;
 
-internal sealed class MatrixPage : ContentPage
+internal sealed partial class MatrixPage : ContentPage
 {
     private enum Section { Classes, Matrix }
 
@@ -36,6 +36,8 @@ internal sealed class MatrixPage : ContentPage
     private readonly Button cancel = MobileStyle.Button("Abbrechen");
     private readonly ActivityIndicator activity = new() { Color = Accent, HeightRequest = 20, WidthRequest = 20, IsVisible = false };
     private readonly Label status = MobileStyle.Label("", 13, Muted);
+    private readonly Label refreshStatus = MobileStyle.Label("", 13, Muted);
+    private readonly ProgressBar loadingBar = new() { HeightRequest = 5, ProgressColor = Accent, BackgroundColor = Tint, IsVisible = false };
     private readonly Label emptyText = MobileStyle.Label("", 15, Muted);
     private readonly Picker classPicker = new() { Title = "Klasse auswählen", TextColor = Ink, TitleColor = Muted };
     private readonly MatrixDeck deck = new();
@@ -58,6 +60,7 @@ internal sealed class MatrixPage : ContentPage
     private IDispatcherTimer? absencePreloadTimer;
     private bool backgroundTransfer;
     private bool preloadingAbsences;
+    private double? transferProgress;
     private bool sessionReady;
     private bool signInRequired;
     private bool signInDismissed;
@@ -74,7 +77,8 @@ internal sealed class MatrixPage : ContentPage
     private double headingHeight = 44;
 
     private bool ForegroundTransfer => transfer != null && !backgroundTransfer;
-    private bool VisibleTransfer => transfer != null && !preloadingAbsences;
+    private bool InteractiveTransferVisible => transfer != null && !preloadingAbsences;
+    private bool VisibleTransfer => InteractiveTransferVisible || deckRefresh != null;
     private bool ControlsLocked => locked || ForegroundTransfer || restoring || changingSelection;
 
     public MatrixPage()
@@ -111,6 +115,7 @@ internal sealed class MatrixPage : ContentPage
         cancel.Clicked += (_, _) => CancelTransfer();
 
         root = new Grid { RowDefinitions = { browserToolbar, new(GridLength.Star) } };
+        root.Add(refreshBrowser, 0, 1);
         root.Add(browser, 0, 1);
         browser.InputTransparent = true;
         root.Add(workspace);
@@ -126,10 +131,18 @@ internal sealed class MatrixPage : ContentPage
         {
             if (args.OldHandler == null) return;
             transfer?.Cancel();
+            deckRefresh?.Cancel();
+            refreshTimer?.Stop();
             sessionReady = false;
             profileReady = false;
             if (browser.Browser is { } previous) previous.LoginAddressChanged -= UpdateLoginAddress;
             reports = null;
+        };
+        refreshBrowser.HandlerChanging += (_, args) =>
+        {
+            if (args.OldHandler == null) return;
+            deckRefresh?.Cancel();
+            refreshReports = null;
         };
     }
 
@@ -186,13 +199,20 @@ internal sealed class MatrixPage : ContentPage
         footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        status.MaxLines = 1;
-        status.LineBreakMode = LineBreakMode.TailTruncation;
-        status.VerticalOptions = activity.VerticalOptions = LayoutOptions.Center;
+        footer.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        footer.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        status.MaxLines = refreshStatus.MaxLines = 1;
+        status.LineBreakMode = refreshStatus.LineBreakMode = LineBreakMode.TailTruncation;
+        status.VerticalOptions = refreshStatus.VerticalOptions = activity.VerticalOptions = LayoutOptions.Center;
         footer.Add(activity);
         footer.Add(status, 1);
+        footer.Add(refreshStatus, 1);
         footer.Add(cancel, 2);
         footer.Add(reconnect, 2);
+        loadingBar.Margin = new Thickness(0, 3, 0, 0);
+        SemanticProperties.SetDescription(loadingBar, "Fortschritt des Abrufs");
+        footer.Add(loadingBar, 0, 1);
+        Grid.SetColumnSpan(loadingBar, 3);
         workspace.Add(footer, 0, 3);
     }
 
@@ -292,7 +312,6 @@ internal sealed class MatrixPage : ContentPage
 
     protected override void OnDisappearing()
     {
-        refreshTimer?.Stop();
         absencePreloadTimer?.Stop();
         base.OnDisappearing();
     }
@@ -307,7 +326,7 @@ internal sealed class MatrixPage : ContentPage
             refreshTimer.Tick += async (_, _) =>
             {
                 if (!sessionReady) await CheckSessionAsync();
-                else if (section == Section.Classes) await RefreshDeckAsync(force: true);
+                else await RefreshDeckAsync(force: true);
             };
         }
         refreshTimer.Start();
@@ -321,14 +340,14 @@ internal sealed class MatrixPage : ContentPage
         activeDialog?.Dismiss();
         refreshTimer?.Stop();
         absencePreloadTimer?.Stop();
-        var finished = transferFinished?.Task;
+        var finished = Task.WhenAll(transferFinished?.Task ?? Task.CompletedTask, deckRefreshFinished?.Task ?? Task.CompletedTask);
         lifetime.Cancel();
         try
         {
             while (Navigation.ModalStack.Count > 0) await Navigation.PopModalAsync(animated: false);
         }
         catch (InvalidOperationException) { }
-        if (finished != null) await finished;
+        await finished;
         try
         {
             MobileWebView.PersistProfile();
@@ -338,6 +357,7 @@ internal sealed class MatrixPage : ContentPage
         finally
         {
             browser.Handler?.DisconnectHandler();
+            refreshBrowser.Handler?.DisconnectHandler();
             lifetime.Dispose();
         }
     }
@@ -352,7 +372,7 @@ internal sealed class MatrixPage : ContentPage
     private async Task ShowMenuAsync()
     {
         if (ControlsLocked || menuOpen || modalOpen) return;
-        string[] actions = ["▤  Meine Klassen", "▦  Tagesmatrix", "⚙  Einstellungen"];
+        string[] actions = ["▤  Meine Klassen", "▦  Tagesmatrix", "↓  Notenrechner-CSV speichern …", "⚙  Einstellungen"];
         menuOpen = true;
         int action;
         try { action = await ChooseAsync("Fehlzeiten MX", actions); }
@@ -363,7 +383,8 @@ internal sealed class MatrixPage : ContentPage
         {
             case 0: await OpenSectionAsync(Section.Classes); break;
             case 1: await OpenSectionAsync(Section.Matrix); break;
-            case 2: await ShowSettingsAsync(); break;
+            case 2: await ExportRosterAsync(); break;
+            case 3: await ShowSettingsAsync(); break;
         }
     }
 
@@ -402,6 +423,7 @@ internal sealed class MatrixPage : ContentPage
         UpdateControls();
         try
         {
+            await StopDeckRefreshAsync();
             if (!await FinishBackgroundTransferAsync() || locked) return;
             try { selection.Save(); }
             catch (Exception error) when (AndroidMatrixCache.StorageFailure(error) || error is InvalidOperationException)
@@ -443,9 +465,20 @@ internal sealed class MatrixPage : ContentPage
 
     private async Task LoadClassesAsync(bool refreshView = true, bool force = false, bool background = false)
     {
+        if (changingSession) return;
         if (!background) signInDismissed = false;
-        var opened = await RunAsync(async (service, progress, token) =>
+        changingSession = true;
+        bool opened;
+        try { opened = await RunAsync(LoadAsync, background); }
+        finally { changingSession = false; }
+        if (!opened || !refreshView) return;
+        if (section == Section.Classes) await RefreshDeckAsync(force);
+        else await OpenDailyMatrixAsync(force);
+
+        async Task LoadAsync(AndroidReports service, IProgress<string> progress, CancellationToken token)
         {
+            await StopDeckRefreshAsync();
+            token.ThrowIfCancellationRequested();
             var (available, year) = await service.ClassesAsync(progress, token, allowSignIn: !signInDismissed);
             token.ThrowIfCancellationRequested();
             if (schoolYear != year)
@@ -466,10 +499,7 @@ internal sealed class MatrixPage : ContentPage
             var loaded = await LoadSavedMatricesAsync(year, token);
             status.Text = savedList && pruned && loaded ? $"{classes.Length} Klassen und Gruppen verfügbar"
                 : "Klassen geöffnet · lokaler Datenspeicher nicht vollständig verfügbar";
-        }, background);
-        if (!opened || !refreshView) return;
-        if (section == Section.Classes) await RefreshDeckAsync(force);
-        else await OpenDailyMatrixAsync(force);
+        }
     }
 
     private void FillClassPicker()
@@ -529,84 +559,6 @@ internal sealed class MatrixPage : ContentPage
         else await OpenDailyMatrixAsync(force: true);
     }
 
-    private async Task RefreshDeckAsync(bool force = false)
-    {
-        if (!sessionReady || ControlsLocked || modalOpen || menuOpen || transfer != null || schoolYear is not { } year)
-            return;
-        var annual = year.ThroughToday();
-        var pending = deck.Entries.Where(entry => force || NeedsRefresh(entry.Card.Matrix, annual))
-            .OrderBy(entry => entry != deck.Active).ToArray();
-        if (pending.Length == 0) return;
-        await RunAsync(async (service, progress, token) =>
-        {
-            var updated = 0;
-            var incomplete = 0;
-            var stored = true;
-            foreach (var (choice, card) in pending)
-            {
-                token.ThrowIfCancellationRequested();
-                if (card.Matrix == null) card.Clear(choice.Name, "Berichte werden geladen …");
-                try
-                {
-                    var classProgress = new InlineProgress<string>(message => progress.Report($"{choice.Name} · {message}"));
-                    var data = await service.MatrixAsync(choice, annual, classProgress, token, allowSignIn: !signInDismissed);
-                    var matrix = await Task.Run(data.Build, token);
-                    token.ThrowIfCancellationRequested();
-                    if (matrix.HasCompleteReports)
-                    {
-                        updated++;
-                        if (!await RememberDeckMatrixAsync(service, choice, card, matrix, data, token)) stored = false;
-                    }
-                    else
-                    {
-                        if (card.Matrix is not { HasCompleteReports: true }) card.ShowMatrix(matrix);
-                        incomplete++;
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    if (card.Matrix == null) card.Clear(choice.Name, InitialUpdate);
-                    throw;
-                }
-                catch (WebUntisSignInRequiredException)
-                {
-                    if (card.Matrix == null) card.Clear(choice.Name, InitialUpdate);
-                    throw;
-                }
-                catch (Exception error) when (!token.IsCancellationRequested &&
-                    error is InvalidOperationException or TimeoutException or IOException or InvalidDataException)
-                {
-                    if (card.Matrix == null) card.Clear(choice.Name, "Daten konnten gerade nicht geladen werden.");
-                    if (browser.Browser is { RendererGone: true }) throw;
-                    incomplete++;
-                }
-            }
-            status.Text = !stored ? "Neue Daten geöffnet · Speichern fehlgeschlagen" :
-                incomplete == 0 ? $"{updated} Klassen aktualisiert" : $"{updated} aktualisiert · {incomplete} Abrufe unvollständig";
-        }, background: true);
-        if (signInRequired && !sessionReady) await CheckSessionAsync();
-    }
-
-    private static bool NeedsRefresh(AttendanceMatrix? matrix, ReportRange range) =>
-        matrix is not { HasCompleteReports: true, FetchedAt: { } fetched } ||
-        matrix.From != range.From || matrix.To != range.To || DateTimeOffset.UtcNow - fetched >= RefreshInterval;
-
-    private async Task<bool> RememberDeckMatrixAsync(AndroidReports service, Student choice, MatrixCard card,
-        AttendanceMatrix matrix, MatrixData data, CancellationToken token)
-    {
-        var hasAbsences = classSelection.Teachers.Contains(choice.Id) && matrix.Cells.Values.Any(HasExcusableEntries);
-        if (hasAbsences && card.Matrix is { } previous && previous.From == matrix.From)
-            matrix.PreparedAbsences = previous.PreparedAbsences;
-        card.ShowMatrix(matrix);
-        var stored = await TryCacheAsync(() => cache.SaveMatrixAsync(data with { PreparedAbsences = matrix.PreparedAbsences }, token));
-        if (!hasAbsences) return stored;
-        var prepared = await service.PrepareAbsencesAsync(choice, data.Range, token);
-        token.ThrowIfCancellationRequested();
-        if (prepared == null) return stored;
-        matrix.PreparedAbsences = prepared;
-        return await TryCacheAsync(() => cache.SaveMatrixAsync(data with { PreparedAbsences = prepared }, token));
-    }
-
     private async Task OpenDailyMatrixAsync(bool force = false)
     {
         if (section != Section.Matrix || classPicker.SelectedItem is not Student choice || schoolYear is not { } year)
@@ -636,11 +588,14 @@ internal sealed class MatrixPage : ContentPage
         {
             try
             {
-                var data = await service.MatrixAsync(choice, range, progress, token, allowSignIn: true);
+                SetTransferProgress(0, AndroidReports.MatrixSteps);
+                var data = await service.MatrixAsync(choice, range, progress, token, allowSignIn: true,
+                    reportProgress: SetTransferProgress);
                 var matrix = await Task.Run(data.Build, token);
                 token.ThrowIfCancellationRequested();
                 if (matrix.HasCompleteReports || matrixCard.Matrix is not { HasCompleteReports: true })
                     matrixCard.ShowMatrix(matrix);
+                SetTransferProgress(AndroidReports.MatrixSteps, AndroidReports.MatrixSteps);
                 status.Text = matrix.HasCompleteReports ? $"{choice.Name} · Tagesmatrix geöffnet" : "WebUntis hat Berichte nur teilweise geliefert.";
             }
             catch
@@ -700,13 +655,14 @@ internal sealed class MatrixPage : ContentPage
         bool background = false, bool quiet = false)
     {
         if (locked || transfer != null && (background || !await FinishBackgroundTransferAsync())) return false;
-        if (locked || browser.Browser is not { } view) return false;
+        if (locked || transfer != null || Window == null) return false;
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         transfer = cancellation;
         transferFinished = completion;
         backgroundTransfer = background;
         preloadingAbsences = quiet;
+        transferProgress = null;
         var progress = new InlineProgress<string>(message => { if (!quiet) status.Text = message; });
         if (!quiet)
         {
@@ -715,6 +671,13 @@ internal sealed class MatrixPage : ContentPage
         }
         try
         {
+            var previous = browser.Browser;
+            if (browser.GetBrowser() is not { } view) return false;
+            if (!ReferenceEquals(view, previous))
+            {
+                if (previous != null) previous.LoginAddressChanged -= UpdateLoginAddress;
+                reports = null;
+            }
             if (!profileReady)
             {
                 var token = cancellation.Token;
@@ -749,7 +712,8 @@ internal sealed class MatrixPage : ContentPage
         }
         catch (Exception error)
         {
-            if (!quiet) status.Text = background ? "Aktualisierung momentan fehlgeschlagen" : "Abruf fehlgeschlagen";
+            if (!quiet) status.Text = browser.Browser is { RendererGone: true } ? MobileWebView.RendererMessage :
+                background ? "Aktualisierung momentan fehlgeschlagen" : "Abruf fehlgeschlagen";
             if (!background && !locked)
             {
                 ShowLogin(false);
@@ -762,22 +726,27 @@ internal sealed class MatrixPage : ContentPage
             transferFinished = null;
             backgroundTransfer = false;
             preloadingAbsences = false;
-            if (!locked && Window != null && !quiet)
+            transferProgress = null;
+            try
             {
-                ShowLogin(false);
-                UpdateControls();
-                ScheduleAbsencePreload();
+                if (!locked && Window != null && !quiet)
+                {
+                    ShowLogin(false);
+                    UpdateControls();
+                    ScheduleAbsencePreload();
+                }
             }
-            completion.TrySetResult();
+            finally { completion.TrySetResult(); }
         }
         return false;
     }
 
     private async Task ConfirmSessionAsync(CancellationToken token)
     {
-        if (sessionReady) return;
+        var wasReady = sessionReady;
         sessionReady = true;
         signInRequired = signInDismissed = false;
+        if (wasReady) return;
         MobileWebView.PersistProfile();
         await SaveSessionAsync(token);
     }
@@ -818,6 +787,12 @@ internal sealed class MatrixPage : ContentPage
 
     private void CancelTransfer()
     {
+        if (!InteractiveTransferVisible && !loginLayer.IsVisible)
+        {
+            deckRefresh?.Cancel();
+            cancel.IsEnabled = false;
+            return;
+        }
         if (loginLayer.IsVisible && !excuseVisible) signInDismissed = true;
         cancel.IsEnabled = false;
         transfer?.Cancel();
@@ -881,6 +856,9 @@ internal sealed class MatrixPage : ContentPage
             sessionReady = false;
             signInRequired = false;
             signInDismissed = true;
+            await StopDeckRefreshAsync();
+            refreshReports = null;
+            if (refreshBrowser.Browser is { RendererGone: false } refreshView) refreshView.Go("about:blank");
             schoolYear = selectedRange = null;
             classes = [];
             FillClassPicker();
@@ -897,8 +875,14 @@ internal sealed class MatrixPage : ContentPage
 
     private async Task OpenCellExcuseAsync(MatrixCard card, AttendanceMatrix matrix, Student student, DateOnly day)
     {
-        if (ControlsLocked || menuOpen || modalOpen || !classSelection.Teachers.Contains(matrix.ClassId) || !IsCurrent()) return;
-        await RunAsync(async (service, progress, token) =>
+        if (ControlsLocked || menuOpen || modalOpen || editingClassId != null ||
+            !classSelection.Teachers.Contains(matrix.ClassId) || !IsCurrent()) return;
+        editingClassId = matrix.ClassId;
+        editRevisions[matrix.ClassId] = editRevisions.GetValueOrDefault(matrix.ClassId) + 1;
+        try { await RunAsync(EditAsync); }
+        finally { editingClassId = null; }
+
+        async Task EditAsync(AndroidReports service, IProgress<string> progress, CancellationToken token)
         {
             if (!IsCurrent()) return;
             var person = AbsenceActions.RequirePerson(matrix, student);
@@ -935,7 +919,9 @@ internal sealed class MatrixPage : ContentPage
             progress.Report($"{matrix.ClassName} · Fehlzeiten werden neu gelesen …");
             var choice = new Student(matrix.ClassId, matrix.ClassName);
             var range = new ReportRange(matrix.From, matrix.To);
-            var data = await service.MatrixAsync(choice, range, progress, token, allowSignIn: false, afterExcuse: true);
+            SetTransferProgress(0, AndroidReports.MatrixSteps);
+            var data = await service.MatrixAsync(choice, range, progress, token, allowSignIn: false, afterExcuse: true,
+                reportProgress: SetTransferProgress);
             var updated = await Task.Run(data.Build, token);
             token.ThrowIfCancellationRequested();
             if (!updated.HasAbsenceReport)
@@ -949,8 +935,9 @@ internal sealed class MatrixPage : ContentPage
                 if (daily.From == range.From && daily.To == range.To) matrixCard.ShowMatrix(updated);
                 else matrixCard.Clear(choice.Name, "Aktualisiere die Tagesmatrix, um die neuen Fehlzeiten zu laden.");
             }
+            SetTransferProgress(AndroidReports.MatrixSteps, AndroidReports.MatrixSteps);
             status.Text = $"{choice.Name} · Aktuelle Fehlzeiten aus WebUntis geladen";
-        });
+        }
 
         bool IsCurrent() => ReferenceEquals(card, ActiveCard) && ReferenceEquals(card.Matrix, matrix);
     }
@@ -974,7 +961,6 @@ internal sealed class MatrixPage : ContentPage
             if (!ReferenceEquals(card, ActiveCard) || card.Matrix is not { } current || current.ClassId != matrix.ClassId ||
                 current.Students.FirstOrDefault(student => student.Id == studentId) is not { } selected) return;
             await OpenCellExcuseAsync(card, current, selected, day);
-            await ShowDayDetailsAsync(card, studentId, day);
         }
     }
 
@@ -1014,7 +1000,8 @@ internal sealed class MatrixPage : ContentPage
 
     private async Task<int> ShowDialogAsync(string title, string[]? items, string? message, CancellationToken token)
     {
-        if (locked || token.IsCancellationRequested || activeDialog != null || Platform.CurrentActivity is not { } activity) return -1;
+        if (locked || token.IsCancellationRequested || activeDialog != null ||
+            Platform.CurrentActivity is not { IsFinishing: false, IsDestroyed: false } activity) return -1;
         var result = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var builder = new NativeDialog.Builder(activity);
         builder.SetTitle(title);
@@ -1031,6 +1018,7 @@ internal sealed class MatrixPage : ContentPage
             return await result.Task.WaitAsync(token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { return -1; }
+        catch (global::Android.Views.WindowManagerBadTokenException) { return -1; }
         finally
         {
             activeDialog = null;
@@ -1060,7 +1048,6 @@ internal sealed class MatrixPage : ContentPage
         classPicker.IsVisible = rangeButton.IsVisible = matrixVisible;
         classPicker.IsEnabled = rangeButton.IsEnabled = !ControlsLocked;
         tools.IsVisible = matrixVisible;
-        activity.IsVisible = activity.IsRunning = VisibleTransfer;
         cancel.IsVisible = cancel.IsEnabled = VisibleTransfer;
         reconnect.IsVisible = hasClasses && signInRequired && !VisibleTransfer;
         ShowHeadingIfNoMatrix();
@@ -1115,9 +1102,22 @@ internal sealed class MatrixPage : ContentPage
 
     private void UpdateFooter()
     {
+        var showRefresh = deckRefresh != null && !InteractiveTransferVisible;
+        status.IsVisible = !showRefresh;
+        refreshStatus.IsVisible = showRefresh;
+        var progress = showRefresh ? deckProgress : transferProgress;
+        loadingBar.IsVisible = VisibleTransfer && progress.HasValue;
+        if (progress is { } fraction) loadingBar.Progress = fraction;
+        activity.IsVisible = activity.IsRunning = VisibleTransfer && !loadingBar.IsVisible;
         var landscape = workspace.Height > 0 && workspace.Width > workspace.Height;
-        footer.IsVisible = reconnect.IsVisible || ForegroundTransfer || VisibleTransfer && ActiveCard?.Matrix == null ||
+        footer.IsVisible = reconnect.IsVisible || VisibleTransfer ||
             (!landscape && !headingCollapsed && !string.IsNullOrWhiteSpace(status.Text));
+    }
+
+    private void SetTransferProgress(int completed, int total)
+    {
+        transferProgress = total > 0 ? Math.Clamp((double)completed / total, 0, 1) : null;
+        UpdateFooter();
     }
 
     private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>

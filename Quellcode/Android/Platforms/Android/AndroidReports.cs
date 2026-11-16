@@ -21,6 +21,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
     private bool continueRequested;
     private bool allowMatrixSignIn;
     private Student? currentClass;
+    internal static int MatrixSteps => Automatic.Count + 1;
 
     public async Task<(Student[] Classes, ReportRange SchoolYear)> ClassesAsync(IProgress<string> progress, CancellationToken token,
         bool allowSignIn = true)
@@ -48,7 +49,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
     }
 
     public async Task<MatrixData> MatrixAsync(Student choice, ReportRange range, IProgress<string> progress,
-        CancellationToken token, bool allowSignIn, bool afterExcuse = false)
+        CancellationToken token, bool allowSignIn, bool afterExcuse = false, Action<int, int>? reportProgress = null)
     {
         var selection = new ReportSelection(choice.Id, range.From, range.To);
         currentClass = choice;
@@ -56,11 +57,9 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         try
         {
             await PrepareAsync(selection, progress, token);
-            var roster = await CommandAsync("readRoster", token, selection, roster: true);
-            Check(roster);
-            if (roster.ClassId != choice.Id || !roster.AllStudents || !roster.RangeReady)
-                throw new InvalidOperationException("WebUntis hat Klasse, Zeitraum oder Namensliste während des Abrufs geändert.");
-            var batch = new ReportBatch(roster.Students, choice.Id);
+            var roster = await ReadRosterAsync(selection, token);
+            var batch = new ReportBatch(roster, choice.Id);
+            var completed = 0;
             foreach (var kind in Automatic)
             {
                 try
@@ -75,6 +74,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
                     batch.Notes.Add($"{CsvReport.Label(kind)} · {error.Message}");
                     reload = true;
                 }
+                reportProgress?.Invoke(++completed, MatrixSteps);
             }
             return await ReportAnalysis.ReadAsync(choice.Name, range, batch, this, progress, token, afterExcuse: afterExcuse);
         }
@@ -116,7 +116,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         {
             token.ThrowIfCancellationRequested();
             if (view.RendererGone)
-                throw new InvalidOperationException("Android WebView wurde beendet. Starte die App erneut.");
+                throw new InvalidOperationException(MobileWebView.RendererMessage);
             var state = await ReadReportPageAsync(includeClasses, !browserPromptHandled, waitingForLogin, token);
             if (state?.Stage == "reports" && !view.Navigating)
             {
@@ -338,29 +338,37 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         throw new InvalidOperationException("WebUntis hat Zeitraum oder Berichtsoptionen nicht übernommen.");
     }
 
-    private async Task<byte[]?> FetchReportAsync(ReportSelection selection, ReportKind kind, IProgress<string> progress, CancellationToken token)
+    private async Task<byte[]?> FetchReportAsync(ReportSelection selection, ReportKind kind, IProgress<string> progress,
+        CancellationToken token, LessonChoice? lesson = null)
     {
-        var label = selection.ExcusedOnly ? "Entschuldigte Fehlzeiten" : CsvReport.Label(kind);
-        progress.Report($"{label} · Bericht wird eingestellt …");
-        await ConfigureReportAsync(selection, kind, token);
+        var label = lesson?.Subject ?? (selection.ExcusedOnly ? "Entschuldigte Fehlzeiten" : CsvReport.Label(kind));
+        if (lesson == null)
+        {
+            progress.Report($"{label} · Bericht wird eingestellt …");
+            await ConfigureReportAsync(selection, kind, token);
+        }
         progress.Report($"{label} · WebUntis erstellt die CSV …");
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(TimeSpan.FromSeconds(40));
+        deadline.CancelAfter(TimeSpan.FromSeconds(lesson == null ? 40 : 18));
         var export = new MobileWebView.Export(deadline.Token);
         var id = Guid.NewGuid().ToString("N");
+        var stage = lesson == null ? "reports" : "lessonReport";
+        var year = SchoolYears.StartYear(selection.From);
         view.PendingExport = export;
         try
         {
-            var prepared = await CommandAsync("prepareExport", export.Token, selection, kind, exportId: id);
-            Check(prepared);
+            var prepared = await CommandAsync(lesson == null ? "prepareExport" : "prepareLessonExport", export.Token,
+                selection, kind, exportId: id, year: year, lesson: lesson);
+            Check(prepared, stage);
             if (prepared.ExportX is { } x && prepared.ExportY is { } y && await view.TapAsync(x, y, export.Token))
                 await Task.WhenAny(export.Download.Task, Task.Delay(250, export.Token));
             var status = await CommandAsync("exportStatus", export.Token, exportId: id);
             if (!status.ExportClicked && !export.Download.Task.IsCompleted && !export.Empty && export.Error == null)
             {
-                var submitted = await CommandAsync("exportFallback", export.Token, selection, kind, exportId: id);
-                Check(submitted);
+                var submitted = await CommandAsync(lesson == null ? "exportFallback" : "lessonExportFallback", export.Token,
+                    selection, kind, exportId: id, year: year, lesson: lesson);
+                Check(submitted, stage);
                 if (!submitted.ExportClicked && !export.Download.Task.IsCompleted && !export.Empty)
                     throw new InvalidOperationException("WebUntis hat den Klick auf «CSV-Ausgabe» nicht bestätigt.");
             }
@@ -396,8 +404,9 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         {
             view.PendingExport = null;
             view.CloseReportWindows(export);
-            reload |= !IsPage(Address);
-            if (!token.IsCancellationRequested && !reload)
+            var atExportPage = IsPage(lesson == null ? Address : MyLessons);
+            reload |= lesson != null || !atExportPage;
+            if (!token.IsCancellationRequested && atExportPage && !view.RendererGone)
             {
                 try { await CommandAsync("clearExport", token, exportId: id); }
                 catch (Exception error) when (ReportFailure(error)) { reload = true; }
@@ -567,9 +576,10 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         ReportKind kind = ReportKind.Absences, bool includeClasses = false, bool roster = false, string? exportId = null,
         string? waitForFormStamp = null, int? year = null, string? className = null, bool openBrowserLogin = false,
         AbsencePerson? absencePerson = null, DateOnly? absenceDay = null, AbsenceListEntry? absenceRow = null,
-        string? editorId = null, bool classAbsences = false, bool mobileLogin = false)
+        string? editorId = null, bool classAbsences = false, bool mobileLogin = false, LessonChoice? lesson = null)
     {
         token.ThrowIfCancellationRequested();
+        if (view.RendererGone) throw new InvalidOperationException(MobileWebView.RendererMessage);
         if (!IsSchoolAddress(view.Address))
             return new ReportState { Stage = Uri.TryCreate(view.Address, UriKind.Absolute, out var uri) &&
                 uri.Scheme == Uri.UriSchemeHttps ? "external" : "loading" };
@@ -582,7 +592,8 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
             kind = kind.ToString(), excusedOnly = selection?.ExcusedOnly == true, includeClasses, roster, exportId, waitForFormStamp,
             allowLandingAsSignedIn = false, openBrowserLogin, mobileLogin,
             targetSchoolYear = year, className, lateOnly = kind == ReportKind.Lateness,
-            absencePerson, absenceDay, absenceRow, editorId, classAbsences, mobileEditor = editorId != null
+            absencePerson, absenceDay, absenceRow, editorId, classAbsences, mobileEditor = editorId != null,
+            lesson, mobileLesson = true
         }, Json);
         var command = $"globalThis.{CommandName}?.({request})";
         var result = await view.EvaluateAsync($"typeof globalThis.{CommandName} === 'function' ? {command} : 'uninitialized'", token);
@@ -591,12 +602,12 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         catch (JsonException) when (view.Navigating) { return new ReportState(); }
     }
 
-    private static void Check(ReportState state)
+    private static void Check(ReportState state, string stage = "reports")
     {
         if (state.Stage is "login" or "external")
             throw new WebUntisSignInRequiredException();
         if (state.Error != null) throw new InvalidOperationException(state.Error);
-        if (state.Stage != "reports")
+        if (state.Stage != stage)
             throw new InvalidOperationException("WebUntis hat das Berichtsformular während des Abrufs verlassen.");
     }
 

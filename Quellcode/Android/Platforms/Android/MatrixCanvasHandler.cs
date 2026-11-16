@@ -41,7 +41,7 @@ internal sealed class MatrixCanvasHandler : GraphicsViewHandler
                         velocity = VelocityTracker.Obtain();
                         velocity?.AddMovement(motion);
                     }
-                    else if (Enabled && canvas.CurrentMatrix is { } original)
+                    if (Enabled && canvas.CurrentMatrix is { Days.Length: > 0, Students.Length: > 0 } original)
                     {
                         press = new CancellationTokenSource();
                         _ = WaitForHoldAsync(original, position, press);
@@ -94,6 +94,7 @@ internal sealed class MatrixCanvasHandler : GraphicsViewHandler
         {
             var dragged = cardGesture == CardGesture.Horizontal;
             cardGesture = CardGesture.None;
+            canvas.EndCardPress();
             int? direction = null;
             if (dragged && up != null)
             {

@@ -13,6 +13,7 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class MobileWebView : IDisposable
 {
+    internal const string RendererMessage = "Android WebView wurde beendet. Starte den Abruf erneut.";
     private static readonly int[] EditorFitDelays = [0, 140, 320];
     private readonly FrameLayout host;
     private readonly BrowserClient client;
@@ -41,8 +42,8 @@ internal sealed class MobileWebView : IDisposable
         SetLoginVisible(false);
     }
 
-    public string? Address => reports.Url;
-    public string? LoginAddress => (loginPopup ?? reports).Url;
+    public string? Address => disposed || rendererGone ? null : reports.Url;
+    public string? LoginAddress => disposed || rendererGone ? null : (loginPopup ?? reports).Url;
     public int MainStatus { get; private set; }
     public bool Navigating { get; private set; }
     public long NavigationRevision { get; private set; }
@@ -55,7 +56,7 @@ internal sealed class MobileWebView : IDisposable
 
     public void Go(string address)
     {
-        if (rendererGone) throw new InvalidOperationException("Android WebView wurde beendet. Starte die App erneut.");
+        EnsureAvailable();
         MainStatus = 0;
         Navigating = true;
         NavigationRevision++;
@@ -67,6 +68,7 @@ internal sealed class MobileWebView : IDisposable
 
     public void SetLoginVisible(bool visible)
     {
+        if (disposed || rendererGone) return;
         ShowingLogin = visible;
         host.ImportantForAccessibility = visible ? ImportantForAccessibility.Auto : ImportantForAccessibility.NoHideDescendants;
         host.DescendantFocusability = visible ? DescendantFocusability.AfterDescendants : DescendantFocusability.BlockDescendants;
@@ -83,6 +85,7 @@ internal sealed class MobileWebView : IDisposable
 
     public bool GoBack()
     {
+        if (disposed || rendererGone) return false;
         var view = loginPopup ?? reports;
         if (!view.CanGoBack())
         {
@@ -93,7 +96,16 @@ internal sealed class MobileWebView : IDisposable
         return true;
     }
 
-    public Task<string> EvaluateAsync(string script, CancellationToken token) => EvaluateAsync(reports, script, token);
+    public Task<string> EvaluateAsync(string script, CancellationToken token)
+    {
+        EnsureAvailable();
+        return EvaluateAsync(reports, script, token);
+    }
+
+    private void EnsureAvailable()
+    {
+        if (disposed || rendererGone) throw new InvalidOperationException(RendererMessage);
+    }
 
     public async Task FitEditorOnOpenAsync(CancellationToken token)
     {
@@ -152,6 +164,8 @@ internal sealed class MobileWebView : IDisposable
     public async Task<bool> TapAsync(double x, double y, CancellationToken token)
     {
         var json = await EvaluateAsync("({width: visualViewport.width, x: visualViewport.offsetLeft, y: visualViewport.offsetTop})", token);
+        token.ThrowIfCancellationRequested();
+        EnsureAvailable();
         if (JsonNode.Parse(json) is not JsonObject viewport) return false;
         var width = viewport["width"]?.GetValue<double>() ?? 0;
         if (width <= 0) return false;
@@ -285,8 +299,11 @@ internal sealed class MobileWebView : IDisposable
     {
         windows.Remove(view);
         if (!listeners.Remove(view, out var listener)) return;
-        view.SetDownloadListener(null);
-        view.StopLoading();
+        if (!rendererGone)
+        {
+            view.SetDownloadListener(null);
+            view.StopLoading();
+        }
         host.RemoveView(view);
         view.Destroy();
         view.Dispose();
@@ -310,6 +327,7 @@ internal sealed class MobileWebView : IDisposable
 
     private bool HandleNavigation(NativeWebView view, string? address)
     {
+        if (disposed || rendererGone) return false;
         if (address is "about:blank") return true;
         var export = PendingExport;
         if (export != null && address?.StartsWith("blob:", StringComparison.OrdinalIgnoreCase) == true)
@@ -326,6 +344,7 @@ internal sealed class MobileWebView : IDisposable
 
     private void OnNavigation(NativeWebView view, string? address, bool finished)
     {
+        if (disposed || rendererGone) return;
         if (ReferenceEquals(view, reports))
         {
             Navigating = !finished;
@@ -376,7 +395,8 @@ internal sealed class MobileWebView : IDisposable
                     break;
             }
         }
-        catch (Exception error) when (error is OperationCanceledException or TimeoutException or System.Text.Json.JsonException or ObjectDisposedException) { }
+        catch (Exception error) when (error is OperationCanceledException or TimeoutException or System.Text.Json.JsonException or
+            ObjectDisposedException or Java.Lang.Exception) { }
     }
 
     private sealed class BrowserClient(MobileWebView owner) : WebViewClient
@@ -403,11 +423,13 @@ internal sealed class MobileWebView : IDisposable
         public override bool OnRenderProcessGone(NativeWebView? view, RenderProcessGoneDetail? detail)
         {
             if (owner.PendingExport is { } export)
-                export.Error = "Android WebView wurde beendet. Starte die App erneut.";
+                export.Error = RendererMessage;
+            var crashed = OperatingSystem.IsAndroidVersionAtLeast(26) && detail?.DidCrash() == true;
+            global::Android.Util.Log.Warn("FehlzeitenMX", crashed ? "WebView-Renderer abgestürzt." : "WebView-Renderer beendet.");
             owner.rendererGone = true;
             owner.MainStatus = 503;
             owner.Navigating = false;
-            owner.host.RemoveAllViews();
+            if (!owner.disposed) owner.host.RemoveAllViews();
             return true;
         }
     }
@@ -417,7 +439,8 @@ internal sealed class MobileWebView : IDisposable
         public override bool OnCreateWindow(NativeWebView? view, bool isDialog, bool isUserGesture, Message? resultMsg)
         {
             var export = owner.PendingExport;
-            if (view == null || resultMsg?.Obj is not NativeWebView.WebViewTransport transport || owner.disposed || owner.editing ||
+            if (view == null || resultMsg?.Obj is not NativeWebView.WebViewTransport transport ||
+                owner.disposed || owner.rendererGone || owner.editing ||
                 (export == null && (!owner.ShowingLogin || !isUserGesture))) return false;
             if (export == null && owner.loginPopup != null) return false;
             var popup = owner.AddView();

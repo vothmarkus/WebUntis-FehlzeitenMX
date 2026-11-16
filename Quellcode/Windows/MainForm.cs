@@ -639,7 +639,7 @@ internal sealed class MainForm : Form
         {
             Title = "Schülerliste für den Notenrechner speichern", Filter = "CSV-Dateien (*.csv)|*.csv", DefaultExt = "csv",
             FileName = $"Notenrechner-Schuelerliste-{yearLabel}.csv", AddExtension = true, CheckPathExists = true, OverwritePrompt = true,
-            InitialDirectory = Directory.Exists(settings.CsvDownloadFolder) ? settings.CsvDownloadFolder! : RosterCsv.DownloadsFolder()
+            InitialDirectory = Directory.Exists(settings.CsvDownloadFolder) ? settings.CsvDownloadFolder! : RosterCsvFile.DownloadsFolder()
         };
         HideProgress();
         if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -651,7 +651,7 @@ internal sealed class MainForm : Form
         ShowIndeterminateProgress();
         var (emails, read, total, failure) = await browser.ReadLessonEmailsAsync(range, progress, ShowProgress, token);
         var export = RosterCsv.Format(rows, startYear, emails);
-        await RosterCsv.SaveAsync(dialog.FileName, export.Content, token);
+        await RosterCsvFile.SaveAsync(dialog.FileName, export.Content, token);
         var folder = Path.GetDirectoryName(dialog.FileName);
         try
         {

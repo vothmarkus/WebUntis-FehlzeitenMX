@@ -11,18 +11,13 @@ internal sealed class DayDetailPage : ContentPage
         SafeAreaEdges = SafeAreaEdges.All;
         BackgroundColor = Surface;
         var close = ActionButton("×", "Schließen");
-        close.Clicked += async (_, _) => await Navigation.PopModalAsync();
         var dayLabel = MobileStyle.Label(day.ToString("dddd, dd.MM.yyyy", CultureInfo.GetCultureInfo("de-DE")), 13, Muted);
         var actions = new HorizontalStackLayout { Spacing = 8, VerticalOptions = LayoutOptions.Start };
+        close.Clicked += async (_, _) => await CloseAsync();
         if (openExcuse != null)
         {
             var excuse = ActionButton("✎", "Entschuldigung bearbeiten", primary: true);
-            excuse.Clicked += async (_, _) =>
-            {
-                if (!excuse.IsEnabled || Navigation.ModalStack.LastOrDefault() != this) return;
-                excuse.IsEnabled = close.IsEnabled = false;
-                if (await Navigation.PopModalAsync(animated: false) == this) await openExcuse();
-            };
+            excuse.Clicked += async (_, _) => await CloseAsync(openExcuse);
             actions.Add(excuse);
         }
         actions.Add(close);
@@ -64,6 +59,20 @@ internal sealed class DayDetailPage : ContentPage
         layout.Add(header);
         layout.Add(new ScrollView { Content = entries }, 0, 1);
         Content = layout;
+
+        async Task CloseAsync(Func<Task>? next = null)
+        {
+            if (!actions.IsEnabled || Navigation.ModalStack.LastOrDefault() != this) return;
+            actions.IsEnabled = false;
+            Page? page;
+            try { page = await Navigation.PopModalAsync(animated: next == null); }
+            catch (InvalidOperationException)
+            {
+                actions.IsEnabled = true;
+                return;
+            }
+            if (page == this && next != null) await next();
+        }
     }
 
     private static Button ActionButton(string symbol, string description, bool primary = false)

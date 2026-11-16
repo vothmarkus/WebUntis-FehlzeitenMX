@@ -1764,5 +1764,3 @@ internal sealed class UntisBrowser(Form owner, string appFolder, bool rememberLo
         public void Dispose() => cancellation.Dispose();
     }
 }
-
-internal sealed record LessonEmailBatch(RosterEmail[] Emails, int Read, int Total, string? Failure);

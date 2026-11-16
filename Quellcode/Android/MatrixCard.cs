@@ -95,9 +95,10 @@ internal sealed class MatrixCard : ContentView
         message.VerticalOptions = LayoutOptions.Center;
         message.HorizontalTextAlignment = TextAlignment.Center;
         message.Margin = new Thickness(8, 12);
+        message.InputTransparent = true;
         var body = new Grid { IsClippedToBounds = true };
-        body.Add(message);
         body.Add(canvas);
+        body.Add(message);
         var layout = new Grid
         {
             RowSpacing = 5,
@@ -135,6 +136,7 @@ internal sealed class MatrixCard : ContentView
     {
         deckIndex = index;
         deckCount = count;
+        canvas.CanSwitchClass = count > 1;
         previous.IsVisible = next.IsVisible = count > 1;
         UpdateHeading();
     }
@@ -162,8 +164,10 @@ internal sealed class MatrixCard : ContentView
     private void UpdateVisibility()
     {
         header.IsVisible = className.Length > 0;
-        canvas.IsVisible = Matrix is { Days.Length: > 0, Students.Length: > 0 };
-        message.IsVisible = !canvas.IsVisible;
+        var hasRows = Matrix is { Days.Length: > 0, Students.Length: > 0 };
+        canvas.IsVisible = inDeck || hasRows;
+        message.IsVisible = !hasRows;
+        AutomationProperties.SetIsInAccessibleTree(canvas, hasRows);
         notes.IsVisible = !inDeck && Matrix is { Notes.Length: > 0 };
     }
 

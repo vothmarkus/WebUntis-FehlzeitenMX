@@ -261,8 +261,7 @@ function reportCommand(request) {
                     visible(node) && clean(report.ownerDocument.getElementById(node.getAttribute('aria-labelledby'))?.textContent ||
                         node.textContent).endsWith('Zurück'));
                 if (!back) return state;
-                back.focus({ preventScroll: true });
-                return { ...state, changedField: 'Zurück' };
+                return lessonButton(back, state, 'Zurück');
             }
             if (request.action === 'lessonList' || request.action === 'openLessonReport') return state;
             const row = [...report.querySelectorAll('tr')].find(tr => clean(tr.cells[0]?.textContent) === rosterLabel);
@@ -326,11 +325,18 @@ function reportCommand(request) {
             if (request.action !== 'openLessonReport' || request.lesson?.key !== key) continue;
             const button = row.cells[reportIndex]?.querySelector('button[aria-label="Berichte"]');
             if (!button || button.disabled) return { ...state, error: 'Für diese Unterrichtszeile sind keine Berichte verfügbar.' };
-            button.focus({ preventScroll: true });
-            return { ...state, changedField: 'Berichte' };
+            return lessonButton(button, state, 'Berichte');
         }
         if (request.action === 'openLessonReport') return { ...state, error: 'Die Unterrichtszeile wurde in WebUntis nicht wiedergefunden.' };
         return { ...state, rangeReady: true, lessons };
+    }
+    function lessonButton(button, state, label) {
+        if (request.mobileLesson) {
+            const target = pointerTarget(button, "nearest");
+            return { ...state, changedField: label, lessonActionX: target?.x, lessonActionY: target?.y };
+        }
+        button.focus({ preventScroll: true });
+        return { ...state, changedField: label };
     }
     function classNames(text) {
         return String(text).split(/[,;|\n]+/).map(clean).filter(Boolean);
@@ -342,7 +348,7 @@ function reportCommand(request) {
             if (!activeExport.clicked) button.click();
             return { ...state, exportClicked: activeExport.clicked };
         }
-        const target = request.action === 'prepareLessonExport' ? null : pointerTarget(button);
+        const target = request.action === 'prepareLessonExport' && !request.mobileLesson ? null : pointerTarget(button);
         const notices = reportNotices();
         const prepared = { id: request.exportId, formStamp: state.formStamp,
             previousLinks: csvLinks(notices), previousEmptyNotices: new Set(emptyNotices(notices)), clicked: false };

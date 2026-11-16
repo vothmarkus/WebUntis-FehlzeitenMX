@@ -34,6 +34,8 @@ internal sealed class ReportState
     public bool ExportClicked { get; set; }
     public double? ExportX { get; set; }
     public double? ExportY { get; set; }
+    public double? LessonActionX { get; set; }
+    public double? LessonActionY { get; set; }
     public string? CsvUrl { get; set; }
     public bool AmbiguousCsvLinks { get; set; }
     public bool EmptyReport { get; set; }

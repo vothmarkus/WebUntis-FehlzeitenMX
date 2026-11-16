@@ -8,6 +8,16 @@ namespace WebUntisAuswertung.Mobile;
 internal sealed class BrowserSurface : View
 {
     internal MobileWebView? Browser { get; set; }
+
+    internal MobileWebView? GetBrowser()
+    {
+        if (Browser is { RendererGone: false } available) return available;
+        if (Handler?.PlatformView is not FrameLayout frame) return null;
+        var failed = Browser;
+        Browser = null;
+        failed?.Dispose();
+        return Browser = new MobileWebView(frame);
+    }
 }
 
 internal sealed class BrowserSurfaceHandler() : ViewHandler<BrowserSurface, FrameLayout>(Mapper)
