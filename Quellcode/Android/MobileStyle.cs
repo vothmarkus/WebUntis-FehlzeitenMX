@@ -4,6 +4,7 @@ namespace WebUntisAuswertung.Mobile;
 
 internal static class MobileStyle
 {
+    public const float WorkspaceSideInset = 10;
     public static readonly Color Ink = Color.FromArgb("#1A2641");
     public static readonly Color Accent = Color.FromArgb("#2458DA");
     public static readonly Color Surface = Color.FromArgb("#F4F6FB");

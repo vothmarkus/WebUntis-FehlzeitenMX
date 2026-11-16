@@ -9,27 +9,29 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     private const float CardSwipeEdge = 36;
     private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
     private readonly bool inDeck;
+    private readonly float horizontalInset;
     private float zoom = 1;
     private float width, height, horizontal, vertical, startX, startY, panX, panY;
     private AttendanceMatrix? matrix;
     private bool atNewest;
     private bool pinching;
     private bool held;
-    private bool outsideRows;
+    private bool outsideTable;
     private bool pendingCardDrag;
     private bool draggingCard;
     private (string Id, DateOnly Day)? selected;
 
-    public MatrixCanvas(bool inDeck)
+    public MatrixCanvas(bool inDeck, float horizontalInset)
     {
         this.inDeck = inDeck;
+        this.horizontalInset = horizontalInset;
         Drawable = this;
-        BackgroundColor = Colors.White;
+        BackgroundColor = inDeck ? Colors.Transparent : Colors.White;
         SemanticProperties.SetDescription(this, "Tagesmatrix. Tippe für Tagesdetails oder halte ein Feld für Entschuldigungen gedrückt.");
         var pan = new PanGestureRecognizer { TouchPoints = 1 };
         pan.PanUpdated += (_, args) =>
         {
-            if (pinching || outsideRows || draggingCard || pendingCardDrag && args.StatusType != GestureStatus.Started) return;
+            if (pinching || outsideTable || draggingCard || pendingCardDrag && args.StatusType != GestureStatus.Started) return;
             switch (args.StatusType)
             {
                 case GestureStatus.Started:
@@ -58,7 +60,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         var tap = new TapGestureRecognizer();
         tap.Tapped += (_, args) =>
         {
-            if (!pinching && !held && !outsideRows && !draggingCard && args.GetPosition(this) is { } position) Select(position);
+            if (!pinching && !held && !outsideTable && !draggingCard && args.GetPosition(this) is { } position) Select(position);
         };
         var pinch = new PinchGestureRecognizer();
         pinch.PinchUpdated += (_, args) =>
@@ -74,7 +76,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         SizeChanged += (_, _) =>
         {
             if (Width <= 0 || Height <= 0) return;
-            width = (float)Width;
+            width = Math.Max(0, (float)Width - 2 * horizontalInset);
             height = (float)Height;
             horizontal = atNewest ? MaxX : Math.Clamp(horizontal, 0, MaxX);
             vertical = Math.Clamp(vertical, 0, MaxY);
@@ -89,15 +91,17 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     public event Action<int?>? CardDragEnded;
     internal AttendanceMatrix? CurrentMatrix => matrix;
     internal bool CanSwitchClass { private get; set; }
+    internal float TableWidth => width;
 
     internal bool BeginPress(Point position)
     {
         held = false;
         draggingCard = false;
-        outsideRows = matrix is not { Days.Length: > 0, Students.Length: > 0 } value ||
-            inDeck && position.Y >= Heading + value.Students.Length * Row - vertical;
+        var tableX = position.X - horizontalInset;
+        outsideTable = matrix is not { Days.Length: > 0, Students.Length: > 0 } value ||
+            inDeck && (tableX < 0 || tableX >= width || position.Y >= Heading + value.Students.Length * Row - vertical);
         pendingCardDrag = inDeck && CanSwitchClass &&
-            (outsideRows || position.X <= CardSwipeEdge || position.X >= width - CardSwipeEdge);
+            (outsideTable || tableX <= CardSwipeEdge || tableX >= width - CardSwipeEdge);
         return pendingCardDrag;
     }
 
@@ -113,7 +117,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
 
     internal void Hold(Point position, AttendanceMatrix original)
     {
-        if (ReferenceEquals(matrix, original) && !pinching && !outsideRows && !draggingCard) Select(position, longPress: true);
+        if (ReferenceEquals(matrix, original) && !pinching && !outsideTable && !draggingCard) Select(position, longPress: true);
     }
     private float Heading => Math.Min(50 * zoom, Math.Max(24, height - 24));
     private float Row => 40 * zoom;
@@ -127,7 +131,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
         if (!float.IsFinite(value)) return;
         value = Math.Clamp(value, 0.65f, 1.8f);
         if (Math.Abs(zoom - value) < 0.001f) return;
-        var focusX = (float)Math.Clamp(origin.X, 0, 1) * width;
+        var focusX = (float)Math.Clamp(origin.X * (width + 2 * horizontalInset) - horizontalInset, 0, width);
         var focusY = (float)Math.Clamp(origin.Y, 0, 1) * height;
         var day = (horizontal + Math.Max(0, focusX - NameWidth)) / Column;
         var student = (vertical + Math.Max(0, focusY - Heading)) / Row;
@@ -154,9 +158,10 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
 
     private void Select(Point position, bool longPress = false)
     {
-        if (matrix == null || position.X < NameWidth || position.Y < Heading || position.X >= width || position.Y >= height) return;
+        var tableX = position.X - horizontalInset;
+        if (matrix == null || tableX < NameWidth || position.Y < Heading || tableX >= width || position.Y >= height) return;
         var row = (int)((position.Y - Heading + vertical) / Row);
-        var index = (int)((position.X - NameWidth + horizontal) / Column);
+        var index = (int)((tableX - NameWidth + horizontal) / Column);
         if (row >= matrix.Students.Length || index >= matrix.Days.Length) return;
         var student = matrix.Students[row];
         var day = matrix.Days[index];
@@ -174,6 +179,9 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     public void Draw(ICanvas canvas, RectF dirtyRect)
     {
         if (matrix is not { Days.Length: > 0, Students.Length: > 0 } || width <= 32 || height <= Heading) return;
+        canvas.SaveState();
+        canvas.Translate(horizontalInset, 0);
+        canvas.ClipRectangle(0, 0, width, height);
         var nameWidth = NameWidth;
         var firstColumn = (int)(horizontal / Column);
         var firstRow = (int)(vertical / Row);
@@ -225,6 +233,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
                 Text(canvas, AttendanceMatrix.Symbol(cell.Mark), x, y, Column, Row, ink, 17, HorizontalAlignment.Center, bold: true);
             }
         }
+        canvas.RestoreState();
         canvas.RestoreState();
     }
 

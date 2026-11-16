@@ -170,8 +170,8 @@ internal sealed class MatrixDeck : ContentView
         var offset = depth * 5;
         near.IsVisible = depth >= 1;
         far.IsVisible = depth >= 2;
-        near.Margin = new Thickness(6, 5, 6, depth == 2 ? 5 : 0);
-        far.Margin = new Thickness(12, 10, 12, 0);
+        near.Margin = new Thickness(WorkspaceSideInset + 6, 5, WorkspaceSideInset + 6, depth == 2 ? 5 : 0);
+        far.Margin = new Thickness(WorkspaceSideInset + 12, 10, WorkspaceSideInset + 12, 0);
         front.Margin = new Thickness(0, 0, 0, offset);
         var card = Active?.Card;
         foreach (var shown in front.Children.OfType<MatrixCard>().ToArray())

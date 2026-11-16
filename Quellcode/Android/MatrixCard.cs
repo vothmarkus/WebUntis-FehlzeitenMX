@@ -6,6 +6,7 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class MatrixCard : ContentView
 {
+    private const float CardInset = 8;
     private static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
     private readonly MatrixCanvas canvas;
     private readonly bool inDeck;
@@ -35,7 +36,8 @@ internal sealed class MatrixCard : ContentView
     public MatrixCard(bool inDeck = false)
     {
         this.inDeck = inDeck;
-        canvas = new MatrixCanvas(inDeck);
+        var deckTableInset = inDeck ? WorkspaceSideInset + CardInset : 0;
+        canvas = new MatrixCanvas(inDeck, deckTableInset);
         canvas.DaySelected += (student, day, cell) =>
         {
             if (Matrix is { } current) DaySelected?.Invoke(current, student, day, cell);
@@ -94,7 +96,7 @@ internal sealed class MatrixCard : ContentView
         };
         message.VerticalOptions = LayoutOptions.Center;
         message.HorizontalTextAlignment = TextAlignment.Center;
-        message.Margin = new Thickness(8, 12);
+        message.Margin = new Thickness(deckTableInset + CardInset, 12);
         message.InputTransparent = true;
         var body = new Grid { IsClippedToBounds = true };
         body.Add(canvas);
@@ -106,7 +108,17 @@ internal sealed class MatrixCard : ContentView
         };
         layout.Add(header);
         layout.Add(body, 0, 1);
-        Content = Card(layout, new Thickness(8));
+        if (inDeck)
+        {
+            // The canvas spans the side margins so a card drag can start outside the drawn table.
+            var face = Card(new Grid(), Thickness.Zero);
+            face.Margin = new Thickness(WorkspaceSideInset, 0);
+            face.InputTransparent = true;
+            header.Margin = new Thickness(deckTableInset, 0);
+            layout.Padding = new Thickness(0, CardInset);
+            Content = new Grid { Children = { face, layout } };
+        }
+        else Content = Card(layout, new Thickness(CardInset));
         Clear("", "");
     }
 

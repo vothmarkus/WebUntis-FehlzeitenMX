@@ -105,7 +105,7 @@ internal sealed class MatrixCanvasHandler : GraphicsViewHandler
                 var dy = up.RawY - y;
                 var speed = velocity?.XVelocity ?? 0;
                 var distance = Math.Abs(dx);
-                var threshold = Math.Clamp(Width * 0.22f, 48 * scale, 120 * scale);
+                var threshold = Math.Clamp(canvas.TableWidth * scale * 0.22f, 48 * scale, 120 * scale);
                 var flick = distance >= 28 * scale && float.IsFinite(speed) &&
                     Math.Abs(speed) >= 600 * scale && Math.Sign(speed) == Math.Sign(dx);
                 direction = distance >= Math.Abs(dy) * HorizontalBias && (distance >= threshold || flick)

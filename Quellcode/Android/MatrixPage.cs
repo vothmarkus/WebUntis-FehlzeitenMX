@@ -148,7 +148,10 @@ internal sealed partial class MatrixPage : ContentPage
 
     private void BuildWorkspace()
     {
-        workspace.Padding = new Thickness(10, 5);
+        workspace.Padding = new Thickness(0, 5);
+        var sideMargin = new Thickness(WorkspaceSideInset, 0);
+        headingHost.Margin = tools.Margin = footer.Margin = sideMargin;
+        matrixCard.Margin = empty.Margin = sideMargin;
         workspace.RowSpacing = 5;
         workspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         workspace.RowDefinitions.Add(new RowDefinition(GridLength.Auto));

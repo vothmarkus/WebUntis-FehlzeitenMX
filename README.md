@@ -22,11 +22,11 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Version 0.6.12
+## Android-Version 0.6.13
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-Die reguläre App heißt **WebUntis-FehlzeitenMX**. Beim Wechsel von 0.6.10 oder älter ist wegen des neuen Signierschlüssels einmalig eine Neuinstallation nötig. Melde dich danach bei WebUntis an und wähle deine Klassen.
+Die reguläre App heißt **WebUntis-FehlzeitenMX**. Eine APK mit einem anderen Signierschlüssel erfordert eine Neuinstallation. Melde dich danach bei WebUntis an und wähle deine Klassen.
 
 Unter **⋮ → Einstellungen** findest du **Anmeldung**, **Klassenauswahl**, **Legende**, **App-Update** und **Impressum**. **App-Update** sucht beim Öffnen der Einstellungen nach Android-Releases auf GitHub. Wenn eine neuere ARM64-Version verfügbar ist, lädt die App die APK auf Wunsch, prüft sie und öffnet die Android-Installation. Bestätige dort das Update. Android kann beim ersten In-App-Update nach der Installationsfreigabe für Fehlzeiten MX fragen.
 
@@ -34,7 +34,7 @@ Beim Start und beim Zurückkehren in die App entsperrst du sie über die Android
 
 **Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Die App behält ihr WebUntis-Profil bei App-Sperre und Updates. Fehlende Sitzungscookies ergänzt sie aus der verschlüsselten Sicherung. Verlangt WebUntis eine neue Anmeldung, öffnet sich die Login-Seite aus der Matrix. Bei Bedarf kannst du über **Anmelden** in der Statuszeile erneut starten.
 
-Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Frühere Auswahlen für Startseite und Meine Klassen werden zusammengeführt. In der **Klassenauswahl** stehen **Meine Klassen** und **Klassenlehrer** nebeneinander. Setzt du **Klassenlehrer**, ist die Klasse automatisch ausgewählt und steht vor den anderen Klassen. Wische über den Klassennamen, am Kartenrand, unter der Tabelle oder im freien Bereich einer leeren Karte nach links zur nächsten Klasse und nach rechts zur vorherigen. Du kannst auch mit den Pfeilen wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste.
+Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Frühere Auswahlen für Startseite und Meine Klassen werden zusammengeführt. In der **Klassenauswahl** stehen **Meine Klassen** und **Klassenlehrer** nebeneinander. Setzt du **Klassenlehrer**, ist die Klasse automatisch ausgewählt und steht vor den anderen Klassen. Wische über den Klassennamen, in den seitlichen Freiflächen neben der Tabelle, unter ihr oder auf einer leeren Karte nach links zur nächsten Klasse und nach rechts zur vorherigen. Du kannst auch mit den Pfeilen wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste.
 
 Die Matrizen öffnen sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und vertikal für weitere Namen. Die Namensspalte und die Datumszeile bleiben sichtbar. Beim Scrollen zu weiteren Namen schiebt sich die App-Überschrift mit Logo und Menü nach oben. Beim Zurückscrollen fährt sie wieder ein.
 
