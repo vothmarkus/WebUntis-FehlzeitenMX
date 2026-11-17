@@ -19,6 +19,7 @@ internal sealed class AndroidMatrixCache
     private const string Transformation = "AES/GCM/NoPadding";
     private const string ClassesFile = "classes.bin";
     private const string SessionFile = "session.bin";
+    private const string LoginFile = "login.bin";
     private const int NonceSize = 12;
     private const int TagSize = 16;
     private const int MaxFileSize = 32 * 1024 * 1024;
@@ -55,6 +56,23 @@ internal sealed class AndroidMatrixCache
 
     public Task SaveSessionAsync(SavedWebUntisCookie[] cookies, CancellationToken token) =>
         Run(() => Write(SessionFile, cookies, token), token);
+
+    public Task<WebUntisLogin?> ReadLoginAsync(CancellationToken token) =>
+        Run(() => Read<WebUntisLogin>(LoginFile) is { IsValid: true } saved ? saved : null, token);
+
+    public Task SaveLoginAsync(WebUntisLogin? login, CancellationToken token) => Run(() =>
+    {
+        if (login == null) File.Delete(Path.Combine(Folder, LoginFile));
+        else if (login.IsValid) Write(LoginFile, login, token);
+        else throw new InvalidDataException("Die WebUntis-Zugangsdaten sind unvollständig.");
+    }, token);
+
+    public Task<bool> SetLoginAttemptAsync(WebUntisLogin expected, DateTimeOffset? at, CancellationToken token) => Run(() =>
+    {
+        if (Read<WebUntisLogin>(LoginFile) != expected) return false;
+        Write(LoginFile, expected with { LastAttemptAt = at }, token);
+        return true;
+    }, token);
 
     public Task SaveMatrixAsync(MatrixData data, CancellationToken token) =>
         Run(() => Write(MatrixFile(data.ClassId), data, token), token);

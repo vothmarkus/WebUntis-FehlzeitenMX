@@ -21,7 +21,8 @@ internal sealed class SettingsPage : ContentPage
     private bool checkedOnce;
     private bool leaving;
 
-    public SettingsPage(bool signedIn, bool hasClasses, Func<Task> connect, Func<Task> signOut, Func<Task> selectClasses)
+    public SettingsPage(bool signedIn, bool hasClasses, Func<Task> connect, Func<Task> signOut, Func<Task> selectClasses,
+        Func<Task> automaticLogin)
     {
         Title = "Einstellungen";
         BackgroundColor = Surface;
@@ -38,6 +39,8 @@ internal sealed class SettingsPage : ContentPage
 
         var signIn = MobileStyle.Button(signedIn ? "Klassenliste aktualisieren" : "Bei WebUntis anmelden", primary: !signedIn);
         signIn.Clicked += async (_, _) => await LeaveAsync(connect);
+        var remember = MobileStyle.Button("Automatische Anmeldung");
+        remember.Clicked += async (_, _) => await LeaveAsync(automaticLogin);
         var disconnect = MobileStyle.Button("Abmelden");
         disconnect.IsVisible = signedIn || hasClasses;
         disconnect.Clicked += async (_, _) => await LeaveAsync(signOut);
@@ -59,7 +62,7 @@ internal sealed class SettingsPage : ContentPage
             Padding = new Thickness(0, 0, 0, 8),
             Children =
             {
-                Section("Anmeldung", accountStatus, signIn, disconnect),
+                Section("Anmeldung", accountStatus, signIn, remember, disconnect),
                 Card(classes),
                 Section("Legende", MobileStyle.Label(LegendText)),
                 update,

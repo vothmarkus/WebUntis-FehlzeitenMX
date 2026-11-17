@@ -22,7 +22,7 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Version 0.6.15
+## Android-Version 0.6.16
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
@@ -33,6 +33,8 @@ Unter **⋮ → Einstellungen** findest du **Anmeldung**, **Klassenauswahl**, **
 Beim Start und beim Zurückkehren in die App entsperrst du sie über die Android-Abfrage mit Biometrie oder deiner Displaysperre.
 
 **Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Die App behält ihr WebUntis-Profil bei App-Sperre und Updates. Fehlende Sitzungscookies ergänzt sie aus der verschlüsselten Sicherung. Verlangt WebUntis eine neue Anmeldung, öffnet sich die Login-Seite aus der Matrix. Bei Bedarf kannst du über **Anmelden** in der Statuszeile erneut starten.
+
+Unter **Einstellungen → Anmeldung → Automatische Anmeldung** kannst du deine Zugangsdaten für die direkte WebUntis-Anmeldung hinterlegen. Die App speichert sie verschlüsselt auf diesem Gerät und erneuert eine abgelaufene Sitzung nach dem Entsperren. Zusätzliche Bestätigungen und externe Schulanmeldungen erledigst du auf der angezeigten Anmeldeseite. **Zugangsdaten löschen** und **Abmelden** entfernen die gespeicherten Zugangsdaten.
 
 Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Frühere Auswahlen für Startseite und Meine Klassen werden zusammengeführt. In der **Klassenauswahl** stehen **Meine Klassen** und **Klassenlehrer** nebeneinander. Setzt du **Klassenlehrer**, ist die Klasse automatisch ausgewählt und steht vor den anderen Klassen. Wische über den Klassennamen, in den seitlichen Freiflächen neben der Tabelle, unter ihr oder auf einer leeren Karte nach links zur nächsten Klasse und nach rechts zur vorherigen. Du kannst auch mit den Pfeilen wechseln. Ein Tipp auf den Klassennamen öffnet die Auswahlliste.
 

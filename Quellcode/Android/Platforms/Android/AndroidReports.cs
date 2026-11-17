@@ -11,9 +11,9 @@ internal sealed class WebUntisSignInRequiredException()
     : Exception("Melde dich bei WebUntis an, um die Daten zu aktualisieren.");
 
 internal sealed partial class AndroidReports(MobileWebView view, Action<bool> showLogin, Func<bool, Task> showExcuse,
-    Func<CancellationToken, Task> sessionConfirmed) : IReportSupplement
+    Func<CancellationToken, Task> sessionConfirmed, AndroidMatrixCache? loginStore = null) : IReportSupplement
 {
-    private const string LoginPage = Origin + "/WebUntis/?school=bkt";
+    private static readonly TimeSpan LoginConfirmationTimeout = TimeSpan.FromSeconds(10);
     private static readonly Uri School = new(Origin);
     private readonly Dictionary<int, SchoolPeriod[]> schoolPeriods = [];
     private readonly SemaphoreSlim supplements = new(1);
@@ -104,8 +104,11 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         var loginShown = false;
         var redirected = false;
         var browserPromptHandled = false;
+        var automaticConsidered = false;
+        WebUntisLogin? automatic = null;
+        WebUntisLogin? submitted = null;
         continueRequested = false;
-        if (startWithLogin) OpenLogin(navigate: true);
+        if (startWithLogin) await OpenLoginAsync(navigate: true);
         else
         {
             progress.Report("WebUntis-Berichte werden geöffnet …");
@@ -120,6 +123,11 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
             var state = await ReadReportPageAsync(includeClasses, !browserPromptHandled, waitingForLogin, token);
             if (state?.Stage == "reports" && !view.Navigating)
             {
+                if (submitted != null && !loginShown && loginStore != null)
+                {
+                    try { await loginStore.SetLoginAttemptAsync(submitted, null, token); }
+                    catch (Exception error) when (AndroidMatrixCache.StorageFailure(error)) { }
+                }
                 showLogin(false);
                 reload = false;
                 await sessionConfirmed(token);
@@ -148,11 +156,18 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
                     waitingForLogin = false;
                     OpenReportPage();
                 }
+                else if (!loginShown && automatic != null)
+                {
+                    if (!view.Navigating && state?.Stage == "login" && submitted == null)
+                        await SubmitAutomaticLoginAsync();
+                    if (!loginShown && (state?.Stage == "external" || waiting.Elapsed >= LoginConfirmationTimeout))
+                        ShowManualLogin();
+                }
             }
             else if (!view.Navigating)
             {
                 if (state?.Stage is "login" or "external" || view.MainStatus == 401)
-                    OpenLogin(navigate: state?.Stage is not ("login" or "external"));
+                    await OpenLoginAsync(navigate: state?.Stage is not ("login" or "external"));
                 else if (view.MainStatus == 403 || state?.Stage == "denied")
                     throw new InvalidOperationException("WebUntis meldet fehlende Berechtigung für die Klassenbuchberichte.");
                 else if (state is { Stage: "signedIn", AtReports: false } && !redirected)
@@ -163,21 +178,63 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
             {
                 if (!allowSignIn || loginShown)
                     throw new TimeoutException("WebUntis hat das Berichtsformular nicht geladen. Melde dich erneut an und tippe danach auf Weiter.");
-                OpenLogin(navigate: true);
+                await OpenLoginAsync(navigate: true);
             }
             await Task.Delay(240, token);
         }
 
-        void OpenLogin(bool navigate)
+        async Task OpenLoginAsync(bool navigate)
         {
             if (!allowSignIn) throw new WebUntisSignInRequiredException();
-            waitingForLogin = loginShown = true;
+            waitingForLogin = true;
             continueRequested = false;
             redirected = false;
             browserPromptHandled = false;
+            waiting.Restart();
+            if (!automaticConsidered && loginStore != null)
+            {
+                automaticConsidered = true;
+                try
+                {
+                    if (await loginStore.ReadLoginAsync(token) is { CanRetry: true } saved)
+                        automatic = saved;
+                }
+                catch (Exception error) when (AndroidMatrixCache.StorageFailure(error)) { }
+            }
+            if (navigate) view.Go(WebUntisLogin.Address);
+            if (automatic == null || submitted != null) ShowManualLogin();
+            else progress.Report("Die WebUntis-Anmeldung wird automatisch erneuert …");
+        }
+
+        async Task SubmitAutomaticLoginAsync()
+        {
+            if (automatic is not { } login || loginStore == null) return;
+            try
+            {
+                if (!await view.TryLoginFormAsync(null, token)) return;
+                var triedAt = DateTimeOffset.UtcNow;
+                if (await loginStore.SetLoginAttemptAsync(login, triedAt, token))
+                {
+                    var pending = login with { LastAttemptAt = triedAt };
+                    if (await view.TryLoginFormAsync(login, token))
+                    {
+                        submitted = pending;
+                        waiting.Restart();
+                        return;
+                    }
+                    await loginStore.SetLoginAttemptAsync(pending, null, token);
+                }
+            }
+            catch (Exception error) when (error is TimeoutException || AndroidMatrixCache.StorageFailure(error)) { }
+            ShowManualLogin();
+        }
+
+        void ShowManualLogin()
+        {
+            automatic = null;
+            loginShown = true;
             progress.Report("Melde dich auf der WebUntis-Seite an.");
             showLogin(true);
-            if (navigate) view.Go(LoginPage);
         }
 
         void OpenReportPage()

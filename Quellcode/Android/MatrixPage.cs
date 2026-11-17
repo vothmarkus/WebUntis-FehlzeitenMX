@@ -391,11 +391,23 @@ internal sealed partial class MatrixPage : ContentPage
         }
     }
 
-    private Task CheckSessionAsync()
+    private async Task CheckSessionAsync()
     {
-        if (ControlsLocked || menuOpen || ModalVisible || transfer != null || sessionReady ||
-            signInDismissed || classes.Length == 0 || Window == null) return Task.CompletedTask;
-        return LoadClassesAsync(background: true);
+        if (!CanCheck()) return;
+        if (classes.Length == 0)
+        {
+            var token = lifetime.Token;
+            try
+            {
+                if (await cache.ReadLoginAsync(token) == null) return;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+            catch (Exception error) when (AndroidMatrixCache.StorageFailure(error)) { return; }
+        }
+        if (CanCheck()) await LoadClassesAsync(background: true);
+
+        bool CanCheck() => !ControlsLocked && !menuOpen && !ModalVisible && transfer == null && !sessionReady &&
+            !signInDismissed && Window != null;
     }
 
     private async Task ShowMenuAsync()
@@ -418,7 +430,35 @@ internal sealed partial class MatrixPage : ContentPage
     }
 
     private Task ShowSettingsAsync() => ShowModalAsync(new SettingsPage(sessionReady, classes.Length > 0,
-        () => LoadClassesAsync(), SignOutAsync, ChooseClassesFromSettingsAsync));
+        () => LoadClassesAsync(), SignOutAsync, ChooseClassesFromSettingsAsync, ConfigureAutomaticLoginAsync));
+
+    private async Task ConfigureAutomaticLoginAsync()
+    {
+        if (ControlsLocked || !await FinishBackgroundTransferAsync() || locked || Window == null) return;
+        var token = lifetime.Token;
+        try
+        {
+            var saved = await cache.ReadLoginAsync(token);
+            await ShowModalAsync(new AutomaticLoginPage(saved, StoreAsync, ReconnectAsync));
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error) when (AndroidMatrixCache.StorageFailure(error))
+        {
+            await NoticeAsync("Automatische Anmeldung", "Die gespeicherte Einstellung konnte nicht geöffnet werden.");
+        }
+
+        async Task<bool> StoreAsync(WebUntisLogin? login)
+        {
+            try { return !locked && await TryCacheAsync(() => cache.SaveLoginAsync(login, token)); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { return false; }
+        }
+
+        Task ReconnectAsync()
+        {
+            signInDismissed = false;
+            return CheckSessionAsync();
+        }
+    }
 
     private async Task ChooseClassesFromSettingsAsync()
     {
@@ -721,7 +761,7 @@ internal sealed partial class MatrixPage : ContentPage
             cancellation.Token.ThrowIfCancellationRequested();
             if (reports == null)
             {
-                reports = new AndroidReports(view, ShowLogin, ShowExcuseAsync, ConfirmSessionAsync);
+                reports = new AndroidReports(view, ShowLogin, ShowExcuseAsync, ConfirmSessionAsync, cache);
                 view.LoginAddressChanged += UpdateLoginAddress;
             }
             await action(reports, progress, cancellation.Token);

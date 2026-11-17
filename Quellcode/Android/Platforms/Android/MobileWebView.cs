@@ -107,6 +107,12 @@ internal sealed class MobileWebView : IDisposable
 
     public Task<string> EvaluateAsync(string script, CancellationToken token) => EvaluateWindowAsync(ReportWindow, script, token);
 
+    public async Task<bool> TryLoginFormAsync(WebUntisLogin? login, CancellationToken token)
+    {
+        if (Navigating || !WebUntisReports.IsSchoolAddress(Address) || loginPopup != null) return false;
+        return await EvaluateAsync(WebUntisLogin.FormScript(login), token) == "true";
+    }
+
     public async Task<bool> FitEditorOnOpenAsync(CancellationToken token)
     {
         var web = ReportWindow;
