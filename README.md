@@ -22,11 +22,11 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Version 0.6.16
+## Android-Version 0.6.17
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
-Die reguläre App heißt **WebUntis-FehlzeitenMX**. Eine APK mit einem anderen Signierschlüssel erfordert eine Neuinstallation. Melde dich danach bei WebUntis an und wähle deine Klassen.
+Die reguläre App heißt **WebUntis-FehlzeitenMX**. Der Wechsel von 0.6.15 auf 0.6.17 erfordert wegen des neuen Signierschlüssels einmalig eine Neuinstallation. Dadurch musst du deine Anmeldung und Klassenauswahl einmal neu einrichten.
 
 Unter **⋮ → Einstellungen** findest du **Anmeldung**, **Klassenauswahl**, **Legende**, **App-Update** und **Impressum**. **App-Update** sucht beim Öffnen der Einstellungen nach Android-Releases auf GitHub. Wenn eine neuere ARM64-Version verfügbar ist, lädt die App die APK auf Wunsch, prüft sie und öffnet die Android-Installation. Bestätige dort das Update. Android kann beim ersten In-App-Update nach der Installationsfreigabe für Fehlzeiten MX fragen.
 
@@ -59,9 +59,11 @@ dotnet workload install maui-android
 dotnet build Quellcode/Android/WebUntisFehlzeitenMX.Android.csproj -c Release --no-incremental
 ```
 
-Der vollständige Build erzeugt die nativen Android-Startmethoden neu.
+Erzeuge jede Release-APK mit `--no-incremental` in einem frischen Build-Verzeichnis. Ein inkrementeller Build kann die nativen Android-Startmethoden auslassen und direkt beim Start abstürzen. Prüfe für ARM64, dass die `lib/arm64-v8a/libxamarin-app.so` aus der fertigen APK `MainActivity_n_1onCreate` als JNI-Methode exportiert. Unter Linux zeigt `readelf --dyn-syms --wide` die Exporte an.
 
-Die mit dem lokalen Testschlüssel signierte APK liegt anschließend unter `Quellcode/Android/bin/Release/net10.0-android/android-arm64/`. Für die Weitergabe von Updates müssen alle APKs mit demselben Schlüssel signiert sein.
+Die APK liegt anschließend unter `Quellcode/Android/bin/Release/net10.0-android/android-arm64/`. Signiere die APK für die Veröffentlichung mit dem Release-Schlüssel und prüfe vor der Weitergabe mit `apksigner verify --print-certs` das Zertifikat. Bewahre den passwortgeschützten Keystore und das Passwort außerhalb des Repositorys an getrennten, dauerhaft verfügbaren Orten auf.
+
+Das Release-Zertifikat ab 0.6.17 hat den SHA-256-Fingerabdruck `470684d861322a3830a22579fdbc9f979c70191cec0168085e1abc05f3ae67d8`.
 
 Android-Updates werden als GitHub-Prerelease mit einem Tag wie `android-v0.6.5` und der signierten Datei `WebUntis-FehlzeitenMX-Android-0.6.5-arm64.apk` veröffentlicht. Setze den Tag auf den Commit, zu dem die APK gebaut wurde, und erhöhe bei jedem Update `ApplicationVersion` und `ApplicationDisplayVersion`. Windows verwendet weiterhin die stabilen Releases mit `v…`-Tag.
 
