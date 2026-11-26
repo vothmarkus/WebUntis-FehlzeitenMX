@@ -6,7 +6,7 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed record WebUntisLogin(string Username, string Password, DateTimeOffset? LastAttemptAt = null)
 {
-    public const string Address = WebUntisReports.Origin + "/";
+    public const string Address = WebUntisReports.Origin + "/WebUntis/?school=bkt";
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(15);
 
     [JsonIgnore]

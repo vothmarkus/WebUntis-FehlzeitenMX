@@ -3,8 +3,9 @@ function reportCommand(request) {
     if (location.origin !== request.origin) return { stage: "external" };
     const clean = text => String(text ?? "").replace(/\s+/g, " ").trim();
     const visible = element => !!element && !element.hidden && element.getClientRects().length > 0;
-    const frames = [...document.querySelectorAll('iframe#embedded-webuntis,iframe[src*="/embedded.do"]')].filter(visible);
-    const documents = [document, ...frames.map(frame => frame.contentDocument).filter(Boolean)];
+    const frameSelector = request.mobile === true ? 'iframe' : 'iframe#embedded-webuntis,iframe[src*="/embedded.do"]';
+    const frames = [...document.querySelectorAll(frameSelector)].filter(frame => visible(frame) && frame.contentDocument);
+    const documents = [document, ...frames.map(frame => frame.contentDocument)];
     const exportHost = document.documentElement;
     const activeExport = exportHost?.untisAuswertungExport;
     const editor = exportHost?.fehlzeitenMxAbsenceEditor;
@@ -65,8 +66,8 @@ function reportCommand(request) {
             return { stage: "browserWelcome", browserLoginX: target?.x, browserLoginY: target?.y };
         }
     }
-    if (request.mobile === true && /^\/WebUntis\/?$/i.test(location.pathname) &&
-        /^#\/basic\/login(?:[/?]|$)/i.test(location.hash)) return { stage: "login" };
+    const loginRoute = request.mobile === true && /^\/WebUntis\/?$/i.test(location.pathname) &&
+        /^#\/basic\/login(?:[/?]|$)/i.test(location.hash);
     const globalYears = [...document.querySelectorAll('.global-school-year-selection-container .ant-select-selector')];
     const yearLabel = node => /^(\d{4})\s*\/\s*\d{4}$/.exec(clean(node?.getAttribute('title') || node?.textContent))?.[1];
     function topTarget(node) {
@@ -119,7 +120,7 @@ function reportCommand(request) {
     const absenceList = readingNotes || absenceAction;
     const readingTimes = request.action === "absenceTimes";
     if (absenceAction && location.pathname.replace(/\/$/, "") !== "/absences")
-        return { stage: documents.some(loginForm) ? "login" : "loading" };
+        return { stage: documents.some(loginForm) || loginRoute ? "login" : "loading" };
     if ((absenceList || readingTimes) && globalYear && globalYear !== String(request.targetSchoolYear))
         return { stage: "wrongYear" };
     if (request.action === "excuseState")
@@ -137,13 +138,14 @@ function reportCommand(request) {
         const atReports = location.pathname.replace(/\/$/, "") === "/class-register-reports" ||
             location.hash.includes("/class-register-reports");
         const classRegister = document.querySelector('a[href="/class-register-overview"],a[href="/class-register-reports"]') ??
-            (request.mobileLogin === true ? [...document.querySelectorAll('a[href*="class-register"]')].find(link =>
+            (request.mobile === true ? [...document.querySelectorAll('a[href*="class-register"]')].find(link =>
                 link.origin === location.origin && (/^\/class-register-(?:overview|reports)\/?$/.test(link.pathname) ||
                     /^#\/(?:[^?#/]+\/)*class-register-(?:overview|reports)(?:[/?]|$)/.test(link.hash))) : null);
         const landing = request.allowLandingAsSignedIn !== false && location.pathname === "/" && document.readyState === "complete";
-        if (visible(classRegister) || request.mobileLogin === true && classRegister || landing) {
+        if (visible(classRegister) || request.mobile === true && (classRegister || globalYear) || landing) {
             return { stage: "signedIn", atReports, hasFrame: frames.length > 0 };
         }
+        if (loginRoute) return { stage: "login" };
         return { stage: "loading", atReports, hasFrame: frames.length > 0 };
     }
 
@@ -636,7 +638,7 @@ function reportCommand(request) {
     function absenceLabel(value) { return clean(value).normalize("NFC").toLowerCase(); }
 
     function excuseStatus(label) {
-        const value = absenceLabel(label);
+        const value = absenceLabel(label).replace(/^\[\s*(.*?)\s*\]$/, "$1");
         if (/^(entschuldigt|akzeptiert|excused)$/.test(value)) return "entschuldigt";
         if (/^(offen|ausstehend|pending)$/.test(value)) return "offen";
         if (/^(nicht entschuldigt|unentschuldigt|nicht akzeptiert|unexcused)$/.test(value)) return "unentschuldigt";
@@ -718,26 +720,12 @@ function reportCommand(request) {
         const content = mobile ? [...current.children] : [];
         const fieldSelector = 'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]),' +
             'select,textarea,[role="combobox"],.dijitTextBox,.dijitSelect';
+        let formScale = 1;
+        let selectField;
         if (mobile) {
             fitMobileViewport(current);
             if (frame) fitMobileViewport(frame);
-            addLayout(doc, `
-                [data-fehlzeiten-mx-excuse-select-menu] {
-                    width: max-content !important;
-                    min-width: min(var(--fehlzeiten-mx-select-width), var(--fehlzeiten-mx-select-limit)) !important;
-                    max-width: var(--fehlzeiten-mx-select-limit) !important;
-                }
-                [data-fehlzeiten-mx-excuse-select-menu] td.dijitMenuItemLabel {
-                    box-sizing: border-box !important;
-                    font-size: var(--fehlzeiten-mx-select-font) !important;
-                    line-height: 1.25 !important;
-                    min-width: 0 !important;
-                    height: 44px !important;
-                    padding: 8px 12px !important;
-                    white-space: normal !important;
-                    overflow-wrap: anywhere !important;
-                }
-            `);
+            styleSelectMenus();
         }
         applyLayout();
 
@@ -783,7 +771,11 @@ function reportCommand(request) {
         Object.assign(editor, size, { dialog: current });
 
         doc.addEventListener("click", onButton, true);
-        if (mobile) doc.addEventListener("keydown", onEditorKey, true);
+        if (mobile) {
+            doc.addEventListener("keydown", onEditorKey, true);
+            form.addEventListener("pointerdown", onSelectField, true);
+            form.addEventListener("focusin", onSelectField, true);
+        }
         form.addEventListener("submit", onSave);
         const observer = new page.MutationObserver(() => {
             if (visible(current)) applyLayout();
@@ -833,31 +825,75 @@ function reportCommand(request) {
             }
             // Mirror the form's left inset at its rightmost field. The title and pane can be wider.
             if (!Number.isFinite(left) || right <= left || right <= 0) return;
-            const scale = (width / (right + Math.max(0, left))).toFixed(4);
-            for (const part of content) setLayout(part, { zoom: scale });
+            formScale = width / (right + Math.max(0, left));
+            for (const part of content) setLayout(part, { zoom: formScale.toFixed(4) });
             current.scrollLeft = scrollLeft;
             current.scrollTop = scrollTop;
-            fitSelectMenus(Number(scale));
+            if (selectField && visible(selectField)) fitSelectMenu(selectField);
         }
 
-        function fitSelectMenus(scale) {
-            // Dijit adds the menu to the page body, outside the zoomed dialog content.
+        function styleSelectMenus() {
+            // Dijit inserts these menus under body when opened. The dialog zoom does not reach them.
+            const scope = 'body[data-fehlzeiten-mx-excuse-mobile]';
+            const menu = `${scope} .dijitPopup > :is(.dijitSelectMenu,.dijitComboBoxMenu,.dijitMenuTable,[role="listbox"])`;
+            const select = `${scope} #excuseForm select:not([multiple]):is(:not([size]), [size="1"])`;
+            doc.body.setAttribute("data-fehlzeiten-mx-excuse-mobile", "");
+            addLayout(doc, `
+                ${menu} {
+                    width: max-content !important;
+                    min-width: min(var(--fehlzeiten-mx-select-width, 12em), var(--fehlzeiten-mx-select-limit, calc(100vw - 24px))) !important;
+                    max-width: var(--fehlzeiten-mx-select-limit, calc(100vw - 24px)) !important;
+                }
+                ${menu} :is(.dijitMenuItemLabel,[role="option"]:not(tr)) {
+                    box-sizing: border-box !important;
+                    font-size: var(--fehlzeiten-mx-select-font, 16px) !important;
+                    line-height: 1.25 !important;
+                    min-height: 44px !important;
+                    padding: 8px 12px !important;
+                    white-space: normal !important;
+                    overflow-wrap: anywhere !important;
+                }
+                ${menu} .dijitMenuItemLabel { height: 44px !important; }
+                @supports (appearance: base-select) {
+                    ${select}, ${select}::picker(select) { appearance: base-select; }
+                    ${select}::picker(select) {
+                        font-size: max(16px, 1em);
+                        max-block-size: min(50dvh, 22em);
+                        max-inline-size: calc(100vw - 2em);
+                        overflow: auto;
+                    }
+                    ${select} option {
+                        min-block-size: 44px;
+                        padding: 8px 12px;
+                        white-space: normal;
+                        overflow-wrap: anywhere;
+                    }
+                }
+            `);
+        }
+
+        function onSelectField(event) {
+            const field = event.target?.closest?.('.dijitSelect,.dijitComboBox,select,[aria-haspopup="listbox"]');
+            if (!field || !form.contains(field)) return;
+            const focused = doc.activeElement;
+            if (event.type === "pointerdown" && !field.contains(focused) &&
+                focused?.matches('textarea,input:not([readonly]):is([type="text"],[type="number"],:not([type]))'))
+                focused.blur();
+            fitSelectMenu(field);
+        }
+
+        function fitSelectMenu(field) {
+            selectField = field;
             const viewportWidth = doc.documentElement.clientWidth;
-            for (const field of form.querySelectorAll('.dijitSelect[widgetid]')) {
-                const menu = widgetById(field.getAttribute("widgetid"), page)?.dropDown?.domNode;
-                if (!menu || !visible(field)) continue;
-                const label = field.querySelector('.dijitSelectLabel') ?? field;
-                const font = Number.parseFloat(page.getComputedStyle(label).fontSize) * scale;
-                const { left, right, width } = field.getBoundingClientRect();
-                // Leave room for the popup border and scrollbar when Dijit aligns it with the field.
-                const available = Math.min(viewportWidth, Math.max(right, viewportWidth - left));
-                menu.setAttribute("data-fehlzeiten-mx-excuse-select-menu", "");
-                setLayout(menu, {
-                    "--fehlzeiten-mx-select-font": `${Math.max(16, font)}px`,
-                    "--fehlzeiten-mx-select-width": `${Math.ceil(width)}px`,
-                    "--fehlzeiten-mx-select-limit": `${Math.max(1, Math.floor(available) - 12)}px`
-                });
-            }
+            const label = field.querySelector('.dijitSelectLabel') ?? field;
+            const font = Number.parseFloat(page.getComputedStyle(label).fontSize) || 16;
+            const { left, right, width } = field.getBoundingClientRect();
+            const available = Math.min(viewportWidth, Math.max(right, viewportWidth - left));
+            setLayout(doc.body, {
+                "--fehlzeiten-mx-select-font": `${Math.max(16, font * formScale)}px`,
+                "--fehlzeiten-mx-select-width": `${Math.ceil(width)}px`,
+                "--fehlzeiten-mx-select-limit": `${Math.max(1, Math.floor(available) - 12)}px`
+            });
         }
 
         function fitMobileViewport(surface) {
@@ -938,13 +974,14 @@ function reportCommand(request) {
                     continue;
                 }
                 const select = widgetById(field.getAttribute("widgetid"), page);
-                const options = select?.getOptions?.();
-                if (Array.isArray(options) && options.some(option => excuseStatus(option.label) === "entschuldigt")) {
-                    selections.add(excuseStatus(select.getOptions(select.get("value"))?.label ??
-                        field.querySelector(".dijitSelectLabel")?.textContent));
-                } else if (/status/i.test([field.id, field.getAttribute("aria-label"),
+                const options = Array.from(select?.getOptions?.() ?? []);
+                const displayed = field.querySelector(".dijitSelectLabel")?.textContent;
+                if (options.some(option => excuseStatus(option?.label) === "entschuldigt")) {
+                    selections.add(excuseStatus(displayed) ?? excuseStatus(select.getOptions(select.get("value"))?.label));
+                } else if (/status/i.test([field.id, field.querySelector('[name]')?.getAttribute("name"),
+                    field.getAttribute("aria-label"),
                     doc.getElementById(field.getAttribute("aria-labelledby"))?.textContent].join(" "))) {
-                    selections.add(excuseStatus(field.getAttribute("aria-valuetext") || field.textContent));
+                    selections.add(excuseStatus(field.getAttribute("aria-valuetext") || displayed || field.textContent));
                 }
             }
             selections.delete(null);
@@ -958,7 +995,12 @@ function reportCommand(request) {
                 observer.disconnect();
                 resizeObserver.disconnect();
                 doc.removeEventListener("click", onButton, true);
-                if (mobile) doc.removeEventListener("keydown", onEditorKey, true);
+                if (mobile) {
+                    doc.removeEventListener("keydown", onEditorKey, true);
+                    form.removeEventListener("pointerdown", onSelectField, true);
+                    form.removeEventListener("focusin", onSelectField, true);
+                    doc.body?.removeAttribute("data-fehlzeiten-mx-excuse-mobile");
+                }
                 form.removeEventListener("submit", onSave);
             }
             // Only send the recognized status, dimensions and lifecycle signals.

@@ -91,6 +91,7 @@ internal sealed partial class MatrixPage : ContentPage
     private bool detailTransition;
     private bool excuseVisible;
     private bool locked;
+    private bool transferTimedOut;
     private double headingHeight = 44;
 
     private bool ForegroundTransfer => transfer != null && !backgroundTransfer;
@@ -744,6 +745,7 @@ internal sealed partial class MatrixPage : ContentPage
         var progress = new InlineProgress<string>(message => { if (!quiet) status.Text = message; });
         if (!quiet)
         {
+            transferTimedOut = false;
             status.Text = background ? "Klassen werden aktualisiert …" : "WebUntis wird geöffnet …";
             UpdateControls();
         }
@@ -790,8 +792,12 @@ internal sealed partial class MatrixPage : ContentPage
         }
         catch (Exception error)
         {
-            if (!quiet) status.Text = browser.Browser is { RendererGone: true } ? MobileWebView.RendererMessage :
-                background ? "Aktualisierung momentan fehlgeschlagen" : "Abruf fehlgeschlagen";
+            if (!quiet)
+            {
+                transferTimedOut = error is TimeoutException;
+                status.Text = browser.Browser is { RendererGone: true } ? MobileWebView.RendererMessage :
+                    transferTimedOut ? error.Message : background ? "Aktualisierung momentan fehlgeschlagen" : "Abruf fehlgeschlagen";
+            }
             if (!background && !locked)
             {
                 ShowLogin(false);
@@ -1313,7 +1319,7 @@ internal sealed partial class MatrixPage : ContentPage
         if (progress is { } fraction) loadingBar.Progress = fraction;
         activity.IsVisible = activity.IsRunning = VisibleTransfer && !loadingBar.IsVisible;
         var landscape = workspace.Height > 0 && workspace.Width > workspace.Height;
-        footer.IsVisible = reconnect.IsVisible || VisibleTransfer || showExcuseStatus ||
+        footer.IsVisible = reconnect.IsVisible || VisibleTransfer || showExcuseStatus || transferTimedOut ||
             (!landscape && !headingCollapsed && !string.IsNullOrWhiteSpace(status.Text));
     }
 
