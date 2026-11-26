@@ -721,6 +721,23 @@ function reportCommand(request) {
         if (mobile) {
             fitMobileViewport(current);
             if (frame) fitMobileViewport(frame);
+            addLayout(doc, `
+                [data-fehlzeiten-mx-excuse-select-menu] {
+                    width: max-content !important;
+                    min-width: min(var(--fehlzeiten-mx-select-width), var(--fehlzeiten-mx-select-limit)) !important;
+                    max-width: var(--fehlzeiten-mx-select-limit) !important;
+                }
+                [data-fehlzeiten-mx-excuse-select-menu] td.dijitMenuItemLabel {
+                    box-sizing: border-box !important;
+                    font-size: var(--fehlzeiten-mx-select-font) !important;
+                    line-height: 1.25 !important;
+                    min-width: 0 !important;
+                    height: 44px !important;
+                    padding: 8px 12px !important;
+                    white-space: normal !important;
+                    overflow-wrap: anywhere !important;
+                }
+            `);
         }
         applyLayout();
 
@@ -820,6 +837,27 @@ function reportCommand(request) {
             for (const part of content) setLayout(part, { zoom: scale });
             current.scrollLeft = scrollLeft;
             current.scrollTop = scrollTop;
+            fitSelectMenus(Number(scale));
+        }
+
+        function fitSelectMenus(scale) {
+            // Dijit adds the menu to the page body, outside the zoomed dialog content.
+            const viewportWidth = doc.documentElement.clientWidth;
+            for (const field of form.querySelectorAll('.dijitSelect[widgetid]')) {
+                const menu = widgetById(field.getAttribute("widgetid"), page)?.dropDown?.domNode;
+                if (!menu || !visible(field)) continue;
+                const label = field.querySelector('.dijitSelectLabel') ?? field;
+                const font = Number.parseFloat(page.getComputedStyle(label).fontSize) * scale;
+                const { left, right, width } = field.getBoundingClientRect();
+                // Leave room for the popup border and scrollbar when Dijit aligns it with the field.
+                const available = Math.min(viewportWidth, Math.max(right, viewportWidth - left));
+                menu.setAttribute("data-fehlzeiten-mx-excuse-select-menu", "");
+                setLayout(menu, {
+                    "--fehlzeiten-mx-select-font": `${Math.max(16, font)}px`,
+                    "--fehlzeiten-mx-select-width": `${Math.ceil(width)}px`,
+                    "--fehlzeiten-mx-select-limit": `${Math.max(1, Math.floor(available) - 12)}px`
+                });
+            }
         }
 
         function fitMobileViewport(surface) {
