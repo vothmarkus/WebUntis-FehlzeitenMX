@@ -18,6 +18,11 @@ internal sealed partial class MatrixPage
     {
         if (!sessionReady || locked || restoring || changingSession || changingSelection || Window == null ||
             deckRefresh != null || schoolYear is not { } year) return;
+        if (pendingExcuses.Count > 0)
+        {
+            await RefreshExcusesAsync();
+            return;
+        }
         var annual = year.ThroughToday();
         var pending = deck.Entries.Where(entry => entry.Class.Id != editingClassId && (force || NeedsRefresh(entry.Card.Matrix, annual)))
             .OrderBy(entry => entry != deck.Active).ToArray();
@@ -33,10 +38,7 @@ internal sealed partial class MatrixPage
         UpdateControls();
         try
         {
-            var previous = refreshBrowser.Browser;
-            if (refreshBrowser.GetBrowser() is not { } view) return;
-            if (!ReferenceEquals(view, previous)) refreshReports = null;
-            var service = refreshReports ??= new AndroidReports(view, _ => { }, _ => Task.CompletedTask, _ => Task.CompletedTask);
+            if (GetRefreshReports() is not { } service) return;
             var updated = 0;
             var incomplete = 0;
             var stored = true;
@@ -86,7 +88,7 @@ internal sealed partial class MatrixPage
                         error is InvalidOperationException or TimeoutException or IOException or InvalidDataException or System.Text.Json.JsonException)
                     {
                         ResetEmptyCard(card, choice, "Daten konnten gerade nicht geladen werden.");
-                        if (view.RendererGone) throw;
+                        if (refreshBrowser.Browser is { RendererGone: true }) throw;
                         if (CanPublish()) incomplete++;
                     }
                 }
@@ -150,19 +152,28 @@ internal sealed partial class MatrixPage
         if (finished != null) await finished;
     }
 
+    private AndroidReports? GetRefreshReports()
+    {
+        var previous = refreshBrowser.Browser;
+        if (refreshBrowser.GetBrowser() is not { } view) return null;
+        if (!ReferenceEquals(view, previous)) refreshReports = null;
+        return refreshReports ??= new AndroidReports(view, _ => { }, _ => Task.CompletedTask, _ => Task.CompletedTask);
+    }
+
     private static bool NeedsRefresh(AttendanceMatrix? matrix, ReportRange range) =>
         matrix is not { HasCompleteReports: true, FetchedAt: { } fetched } ||
         matrix.From != range.From || matrix.To != range.To || DateTimeOffset.UtcNow - fetched >= RefreshInterval;
 
     private async Task<bool> RememberDeckMatrixAsync(AndroidReports service, Student choice, MatrixCard card,
-        AttendanceMatrix matrix, MatrixData data, CancellationToken token, Func<bool>? canPublish = null)
+        AttendanceMatrix matrix, MatrixData data, CancellationToken token, Func<bool>? canPublish = null,
+        bool prepareAbsences = true)
     {
         var hasAbsences = classSelection.Teachers.Contains(choice.Id) && matrix.Cells.Values.Any(HasExcusableEntries);
-        if (hasAbsences && card.Matrix is { } previous && previous.From == matrix.From)
+        if (hasAbsences && matrix.PreparedAbsences == null && card.Matrix is { } previous && previous.From == matrix.From)
             matrix.PreparedAbsences = previous.PreparedAbsences;
         card.ShowMatrix(matrix);
         var stored = await SaveAsync();
-        if (!hasAbsences || !CanSave()) return stored;
+        if (!prepareAbsences || !hasAbsences || !CanSave()) return stored;
         var prepared = await service.PrepareAbsencesAsync(choice, data.Range, token);
         token.ThrowIfCancellationRequested();
         if (prepared == null || !CanSave()) return stored;

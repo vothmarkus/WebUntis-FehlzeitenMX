@@ -25,6 +25,19 @@ internal static class AbsenceActions
         .OrderBy(row => row.From).ThenBy(row => CsvReport.ReadTime(row.Start)).ThenBy(row => row.To)
         .ThenBy(row => CsvReport.ReadTime(row.End)).ToArray();
 
+    public static bool Confirms(IEnumerable<AbsenceListEntry> rows, AbsenceListEntry edited, Excuse status) =>
+        status != Excuse.Unspecified && rows.Any(row => row.Id == edited.Id &&
+            row.StudentId == edited.StudentId && row.From == edited.From && row.To == edited.To &&
+            row.Start == edited.Start && row.End == edited.End && ListedStatus(row.Status) == status);
+
+    private static Excuse ListedStatus(string label) => AttendanceMatrix.Fold(label) switch
+    {
+        "entschuldigt" or "akzeptiert" or "excused" => Excuse.Excused,
+        "unentschuldigt" or "nichtentschuldigt" or "nichtakzeptiert" or "unexcused" => Excuse.Unexcused,
+        "offen" or "ausstehend" or "pending" => Excuse.Open,
+        _ => Excuse.Unspecified
+    };
+
     public static string Period(AbsenceListEntry row)
     {
         var time = row.From == row.To ? $"{row.From:dd.MM.} · {row.Start}–{row.End}" :

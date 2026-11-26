@@ -20,6 +20,7 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
     private bool pendingCardDrag;
     private bool draggingCard;
     private (string Id, DateOnly Day)? selected;
+    public Func<string, string, DateOnly, bool>? IsExcusePending { get; init; }
 
     public MatrixCanvas(bool inDeck, float horizontalInset)
     {
@@ -227,14 +228,21 @@ internal sealed class MatrixCanvas : GraphicsView, IDrawable
                 var day = matrix.Days[col];
                 var x = nameWidth + col * Column - horizontal;
                 if (!matrix.Cells.TryGetValue((student.Id, day), out var cell)) continue;
-                var (fill, ink) = ColorsFor(cell.Mark);
+                var pending = IsExcusePending?.Invoke(matrix.ClassId, student.Id, day) == true &&
+                    cell.Entries.Any(entry => entry.Kind is EntryKind.Absent or EntryKind.Late);
+                var mark = cell.Mark;
+                if (pending) mark = mark is DayMark.AbsentAndLate or DayMark.ExcusedAbsenceAndLate or DayMark.Late
+                    ? DayMark.ExcusedAbsenceAndLate : DayMark.ExcusedAbsence;
+                var (fill, ink) = ColorsFor(mark);
                 if (selected == (student.Id, day))
                 {
                     fill = MobileStyle.Accent;
                     ink = Colors.White;
                 }
                 Cell(canvas, x, y, Column, Row, fill);
-                Text(canvas, AttendanceMatrix.Symbol(cell.Mark), x, y, Column, Row, ink, 17, HorizontalAlignment.Center, bold: true);
+                var symbol = AttendanceMatrix.Symbol(mark);
+                if (pending) symbol += "*";
+                Text(canvas, symbol, x, y, Column, Row, ink, 17, HorizontalAlignment.Center, bold: true);
             }
         }
         canvas.RestoreState();

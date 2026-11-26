@@ -110,7 +110,36 @@ internal sealed class MobileWebView : IDisposable
     public async Task<bool> TryLoginFormAsync(WebUntisLogin? login, CancellationToken token)
     {
         if (Navigating || !WebUntisReports.IsSchoolAddress(Address) || loginPopup != null) return false;
-        return await EvaluateAsync(WebUntisLogin.FormScript(login), token) == "true";
+        if (login == null) return await EvaluateAsync(WebUntisLogin.FormScript("probe"), token) == "true";
+        var revision = NavigationRevision;
+        var attempt = Guid.NewGuid().ToString("N");
+        var submitted = false;
+        try
+        {
+            if (await EvaluateAsync(WebUntisLogin.FormScript("fill", login, attempt), token) != "true") return false;
+            for (var retry = 0; retry < 5 && IsSamePage(); retry++)
+            {
+                await Task.Delay(100, token);
+                if (!IsSamePage()) break;
+                var result = await EvaluateAsync(WebUntisLogin.FormScript("submit", login, attempt), token);
+                if (result == "null") continue;
+                submitted = result == "true";
+                return submitted;
+            }
+            return false;
+        }
+        finally
+        {
+            if (!submitted && IsSamePage())
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                try { await EvaluateAsync(WebUntisLogin.FormScript("clear", login, attempt), cleanup.Token); }
+                catch (Exception error) when (error is TimeoutException or OperationCanceledException or InvalidOperationException) { }
+            }
+        }
+
+        bool IsSamePage() => !Navigating && NavigationRevision == revision && loginPopup == null &&
+            WebUntisReports.IsSchoolAddress(Address);
     }
 
     public async Task<bool> FitEditorOnOpenAsync(CancellationToken token)

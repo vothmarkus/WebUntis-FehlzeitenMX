@@ -55,15 +55,18 @@ function reportCommand(request) {
 
     const loginForm = doc => [...doc.querySelectorAll('input[type="password"]')].find(visible);
     if (request.mobileLogin === true) fitMobileLogin(documents.map(loginForm).find(Boolean));
-    if (request.openBrowserLogin === true &&
+    if (request.openBrowserLogin === true && !documents.some(loginForm) &&
         /willkommen bei web\s*untis/i.test(clean(document.body?.innerText || document.body?.textContent))) {
         const actions = [...document.querySelectorAll('a,button,[role="button"]')].filter(node =>
-            visible(node) && clean(node.innerText || node.textContent).toLowerCase() === "im browser öffnen");
+            visible(node) && /^(?:im browser (?:öffnen|fortfahren)|continue in (?:the )?browser)$/i.test(
+                clean(node.innerText || node.textContent || node.getAttribute("aria-label"))));
         if (actions.length === 1) {
             const target = pointerTarget(actions[0], "nearest");
             return { stage: "browserWelcome", browserLoginX: target?.x, browserLoginY: target?.y };
         }
     }
+    if (request.mobile === true && /^\/WebUntis\/?$/i.test(location.pathname) &&
+        /^#\/basic\/login(?:[/?]|$)/i.test(location.hash)) return { stage: "login" };
     const globalYears = [...document.querySelectorAll('.global-school-year-selection-container .ant-select-selector')];
     const yearLabel = node => /^(\d{4})\s*\/\s*\d{4}$/.exec(clean(node?.getAttribute('title') || node?.textContent))?.[1];
     function topTarget(node) {
@@ -133,7 +136,10 @@ function reportCommand(request) {
         }
         const atReports = location.pathname.replace(/\/$/, "") === "/class-register-reports" ||
             location.hash.includes("/class-register-reports");
-        const classRegister = document.querySelector('a[href="/class-register-overview"],a[href="/class-register-reports"]');
+        const classRegister = document.querySelector('a[href="/class-register-overview"],a[href="/class-register-reports"]') ??
+            (request.mobileLogin === true ? [...document.querySelectorAll('a[href*="class-register"]')].find(link =>
+                link.origin === location.origin && (/^\/class-register-(?:overview|reports)\/?$/.test(link.pathname) ||
+                    /^#\/(?:[^?#/]+\/)*class-register-(?:overview|reports)(?:[/?]|$)/.test(link.hash))) : null);
         const landing = request.allowLandingAsSignedIn !== false && location.pathname === "/" && document.readyState === "complete";
         if (visible(classRegister) || request.mobileLogin === true && classRegister || landing) {
             return { stage: "signedIn", atReports, hasFrame: frames.length > 0 };
@@ -586,7 +592,12 @@ function reportCommand(request) {
                 [...statusCell.querySelectorAll("a[href]")].find(link =>
                     /^javascript:absenceListForm\.excuseAbsence\(\s*(\d+)\s*,\s*\d+\s*\);\s*void\(0\);?$/i
                         .exec(link.getAttribute("href") ?? "")?.[1] === id);
-            const status = clean(excuse?.title || excuse?.textContent || statusCell.textContent).replace(/\s*\/\s*\d+$/, "");
+            const labels = [statusCell.textContent, statusCell.title, statusCell.getAttribute("aria-label"),
+                ...[...statusCell.querySelectorAll('[title],[aria-label]')]
+                    .flatMap(node => [node.title, node.getAttribute("aria-label")])]
+                .map(text => clean(text).replace(/\s*\/\s*\d+$/, ""));
+            const status = labels.find(excuseStatus) ??
+                clean(excuse?.title || excuse?.textContent || statusCell.textContent).replace(/\s*\/\s*\d+$/, "");
             matchesById.set(id, {
                 value: { id, studentName, studentId,
                     from: fromDay, to: toDay, start: absenceTime(text(startField)), end: absenceTime(text(endField)),
@@ -624,6 +635,14 @@ function reportCommand(request) {
 
     function absenceLabel(value) { return clean(value).normalize("NFC").toLowerCase(); }
 
+    function excuseStatus(label) {
+        const value = absenceLabel(label);
+        if (/^(entschuldigt|akzeptiert|excused)$/.test(value)) return "entschuldigt";
+        if (/^(offen|ausstehend|pending)$/.test(value)) return "offen";
+        if (/^(nicht entschuldigt|unentschuldigt|nicht akzeptiert|unexcused)$/.test(value)) return "unentschuldigt";
+        return null;
+    }
+
     function absenceTime(value) {
         const time = clean(value);
         return /^\d:\d{2}$/.test(time) ? "0" + time : time;
@@ -655,7 +674,8 @@ function reportCommand(request) {
         if (editor.dialog) {
             const closed = editor.closed === true || !visible(editor.dialog);
             return { absenceEditorVisible: !closed, absenceEditorClosed: closed,
-                absenceEditorSaveRequested: editor.saveRequested, editorWidth: editor.width, editorHeight: editor.height };
+                absenceEditorSaveRequested: editor.saveRequested, absenceEditorRequestedStatus: editor.requestedStatus,
+                editorWidth: editor.width, editorHeight: editor.height };
         }
         if (!documents.includes(doc)) return {};
         const form = doc.getElementById("excuseForm");
@@ -746,6 +766,7 @@ function reportCommand(request) {
         Object.assign(editor, size, { dialog: current });
 
         doc.addEventListener("click", onButton, true);
+        if (mobile) doc.addEventListener("keydown", onEditorKey, true);
         form.addEventListener("submit", onSave);
         const observer = new page.MutationObserver(() => {
             if (visible(current)) applyLayout();
@@ -845,17 +866,51 @@ function reportCommand(request) {
         }
 
         function onButton(event) {
-            const button = event.target?.closest?.('button,[role="button"]');
-            if (button && current.contains(button) && enabled(button) &&
-                /^speichern$/i.test(clean(button.textContent).replace(/^●\s*/, ""))) {
-                onSave();
-            }
+            const button = event.target?.closest?.('button,[role="button"],input[type="submit"]');
+            if (!button || !current.contains(button) || !enabled(button)) return;
+            const label = clean(button.textContent || button.getAttribute("aria-label") || button.title || button.value).replace(/^●\s*/, "");
+            if (/^speichern$/i.test(label)) onSave();
+            if (mobile && (/^(schließen|abbrechen)$/i.test(label) || button.classList.contains("dijitDialogCloseIcon")))
+                clearSaveRequest();
+        }
+
+        function onEditorKey(event) {
+            if (event.key === "Escape" && current.contains(event.target)) clearSaveRequest();
+        }
+
+        function clearSaveRequest() {
+            editor.saveRequested = false;
+            editor.requestedStatus = null;
         }
 
         function onSave() {
-            if (editor.saveRequested) return;
+            if (editor.saveRequested && !mobile) return;
             editor.saveRequested = true;
+            if (mobile) editor.requestedStatus = selectedExcuseStatus();
             notify("save");
+        }
+
+        function selectedExcuseStatus() {
+            const selections = new Set();
+            for (const field of form.querySelectorAll('select, .dijitSelect[widgetid], [role="combobox"]')) {
+                if (!visible(field)) continue;
+                if (field.matches("select")) {
+                    if ([...field.options].some(option => excuseStatus(option.text) === "entschuldigt"))
+                        selections.add(excuseStatus(field.selectedOptions[0]?.text));
+                    continue;
+                }
+                const select = widgetById(field.getAttribute("widgetid"), page);
+                const options = select?.getOptions?.();
+                if (Array.isArray(options) && options.some(option => excuseStatus(option.label) === "entschuldigt")) {
+                    selections.add(excuseStatus(select.getOptions(select.get("value"))?.label ??
+                        field.querySelector(".dijitSelectLabel")?.textContent));
+                } else if (/status/i.test([field.id, field.getAttribute("aria-label"),
+                    doc.getElementById(field.getAttribute("aria-labelledby"))?.textContent].join(" "))) {
+                    selections.add(excuseStatus(field.getAttribute("aria-valuetext") || field.textContent));
+                }
+            }
+            selections.delete(null);
+            return selections.size === 1 ? [...selections][0] : null;
         }
 
         function notify(action) {
@@ -865,11 +920,12 @@ function reportCommand(request) {
                 observer.disconnect();
                 resizeObserver.disconnect();
                 doc.removeEventListener("click", onButton, true);
+                if (mobile) doc.removeEventListener("keydown", onEditorKey, true);
                 form.removeEventListener("submit", onSave);
             }
-            // Send dimensions and lifecycle signals to the host without transferring form values.
+            // Only send the recognized status, dimensions and lifecycle signals.
             const message = { editorId: editor.id, action, saveRequested: editor.saveRequested,
-                width: editor.width, height: editor.height };
+                requestedStatus: editor.requestedStatus, width: editor.width, height: editor.height };
             if (mobile) globalThis.FehlzeitenMxEditor?.postMessage(JSON.stringify(message));
             else globalThis.chrome?.webview?.postMessage(message);
         }

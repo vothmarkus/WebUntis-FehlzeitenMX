@@ -27,6 +27,19 @@ public sealed class AbsenceActionsTests
         Assert.Null(AbsenceActions.ForDay(rows, new AbsencePerson("123", "Nora Test"), Day));
     }
 
+    [Fact]
+    public void ConfirmationRequiresTheSavedStatusOnTheExactAbsence()
+    {
+        var edited = Row("first", "123", "08:00");
+        var confirmed = edited with { Status = "Entschuldigt", CanExcuse = false };
+
+        Assert.True(AbsenceActions.Confirms([confirmed], edited, Excuse.Excused));
+        Assert.False(AbsenceActions.Confirms([edited, confirmed with { Id = "second" }], edited, Excuse.Excused));
+        Assert.False(AbsenceActions.Confirms([confirmed with { StudentId = "456" }], edited, Excuse.Excused));
+        Assert.False(AbsenceActions.Confirms([confirmed with { Start = "09:00" }], edited, Excuse.Excused));
+        Assert.False(AbsenceActions.Confirms([confirmed with { Status = "Entschuldigung bearbeiten" }], edited, Excuse.Excused));
+    }
+
     private static AbsenceListEntry Row(string id, string studentId, string start) =>
         new(id, studentId, "Nora Test", Day, Day, start, "10:00", "Unentschuldigt", "", true);
 }

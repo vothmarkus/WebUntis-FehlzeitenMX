@@ -21,23 +21,25 @@ internal sealed partial class AndroidReports
         MatchingPreparedPage(matrix, day) is { } page && AbsenceActions.Person(matrix, student) is { } person
             ? AbsenceActions.ForDay(page.Rows, person, day) : null;
 
-    public async Task<AbsenceListEntry[]?> PrepareAbsencesAsync(Student choice, ReportRange range, CancellationToken token)
+    public async Task<AbsenceListEntry[]?> PrepareAbsencesAsync(Student choice, ReportRange range, CancellationToken token,
+        bool requireFresh = false)
     {
         var selection = new ReportSelection(choice.Id, range.From, range.To);
-        if (PreparedPage is { } existing && existing.Selection == selection) return existing.Rows;
+        if (!requireFresh && PreparedPage is { } existing && existing.Selection == selection) return existing.Rows;
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
         try
         {
-            OpenAbsenceList();
+            OpenAbsenceList(requireFresh);
             preparedAbsences = null;
             var state = await WaitForAbsencesAsync(choice.Name, selection, deadline.Token, entireClass: true);
             preparedAbsences = new PreparedAbsencePage(selection, state.EditableAbsences, view.NavigationRevision, DateTimeOffset.UtcNow);
             return state.EditableAbsences;
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested) { return null; }
-        catch (Exception error) when (error is WebUntisSignInRequiredException || ReportFailure(error)) { return null; }
+        catch (WebUntisSignInRequiredException) when (!requireFresh) { return null; }
+        catch (Exception error) when (ReportFailure(error)) { return null; }
     }
 
     public async Task<AbsenceListEntry[]> ReadAbsenceActionsAsync(AttendanceMatrix matrix, Student student, DateOnly day,
@@ -69,7 +71,7 @@ internal sealed partial class AndroidReports
     }
 
     // WebUntis validates the original form and receives the teacher's own save action.
-    public async Task<bool> ShowExcuseAsync(AttendanceMatrix matrix, Student student, DateOnly day, AbsenceListEntry row,
+    public async Task<ExcuseSave> ShowExcuseAsync(AttendanceMatrix matrix, Student student, DateOnly day, AbsenceListEntry row,
         IProgress<string> progress, CancellationToken token)
     {
         var person = AbsenceActions.RequirePerson(matrix, student);
@@ -77,6 +79,7 @@ internal sealed partial class AndroidReports
         var year = SchoolYears.StartYear(matrix.From);
         var refresh = false;
         var closed = false;
+        string? requestedStatus = null;
         closeExcuse = false;
         view.EditorMessage += OnEditorMessage;
         try
@@ -110,7 +113,7 @@ internal sealed partial class AndroidReports
                 if (!closed && !closeExcuse) await Task.Delay(220, token);
             }
             token.ThrowIfCancellationRequested();
-            return refresh;
+            return new ExcuseSave(refresh && !closeExcuse, CsvReport.ReadExcuse(requestedStatus ?? ""));
         }
         finally
         {
@@ -159,8 +162,12 @@ internal sealed partial class AndroidReports
         {
             if (view.Navigating || closed) return new ReportState();
             var state = await CommandAsync("excuseState", readingToken, year: year, editorId: editorId);
-            refresh |= state.AbsenceEditorSaveRequested;
-            closed |= state.AbsenceEditorClosed;
+            if (!closed && (state.AbsenceEditorVisible || state.AbsenceEditorClosed))
+            {
+                refresh = state.AbsenceEditorSaveRequested;
+                requestedStatus = state.AbsenceEditorRequestedStatus;
+                closed = state.AbsenceEditorClosed;
+            }
             if (!closed && !refresh) CheckAbsencePage(state);
             return state;
         }
@@ -171,8 +178,9 @@ internal sealed partial class AndroidReports
             try { message = JsonSerializer.Deserialize<EditorMessage>(json, Json); }
             catch (JsonException) { return; }
             if (message?.EditorId != editorId || message.Action is not ("save" or "closed")) return;
-            refresh |= message.SaveRequested;
-            closed |= message.Action == "closed";
+            refresh = message.SaveRequested;
+            requestedStatus = message.RequestedStatus;
+            closed = message.Action == "closed";
         }
     }
 
@@ -184,10 +192,10 @@ internal sealed partial class AndroidReports
         PreparedPage is { } page && page.Selection.ClassId == matrix.ClassId &&
         page.Selection.From <= day && day <= page.Selection.To ? page : null;
 
-    private void OpenAbsenceList()
+    private void OpenAbsenceList(bool requireFresh = false)
     {
         reload = true;
-        if (IsPage(Absences) && !view.Navigating && view.MainStatus < 400) return;
+        if (!requireFresh && IsPage(Absences) && !view.Navigating && view.MainStatus < 400) return;
         preparedAbsences = null;
         view.Go(Absences);
     }
@@ -259,5 +267,7 @@ internal sealed partial class AndroidReports
         long NavigationRevision, DateTimeOffset LoadedAt);
     private sealed class AbsenceSchoolYearException()
         : InvalidOperationException("WebUntis hat das Schuljahr der Abwesenheitsliste nicht bestätigt.");
-    private sealed record EditorMessage(string EditorId, string Action, bool SaveRequested);
+    private sealed record EditorMessage(string EditorId, string Action, bool SaveRequested, string? RequestedStatus);
 }
+
+internal readonly record struct ExcuseSave(bool Saved, Excuse Status);

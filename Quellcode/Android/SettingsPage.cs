@@ -4,7 +4,7 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class SettingsPage : ContentPage
 {
-    private const string LegendText = "•  Kein Fehlzeiteintrag\n|  Fehlzeit\nE  Entschuldigt\n+  Verspätet\n|+ / E+  Fehlzeit und Verspätung\n?  Ungeklärt\nB  Befreit";
+    private const string LegendText = "•  Kein Fehlzeiteintrag\n|  Fehlzeit\nE  Entschuldigt\nE*  Entschuldigung im Abgleich\n+  Verspätet\n|+ / E+  Fehlzeit und Verspätung\n?  Ungeklärt\nB  Befreit";
     private const string Imprint = """
         Markus Voth · Entwicklung und Kontakt
         Berufskolleg für Technik Düren

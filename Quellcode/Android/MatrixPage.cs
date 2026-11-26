@@ -48,6 +48,7 @@ internal sealed partial class MatrixPage : ContentPage
     private readonly ActivityIndicator activity = new() { Color = Accent, HeightRequest = 20, WidthRequest = 20, IsVisible = false };
     private readonly Label status = MobileStyle.Label("", 13, Muted);
     private readonly Label refreshStatus = MobileStyle.Label("", 13, Muted);
+    private readonly Label excuseStatus = MobileStyle.Label("", 13, Muted);
     private readonly ProgressBar loadingBar = new() { HeightRequest = 5, ProgressColor = Accent, BackgroundColor = Tint, IsVisible = false };
     private readonly Label emptyText = MobileStyle.Label("", 15, Muted);
     private readonly Picker classPicker = new() { Title = "Klasse auswählen", TextColor = Ink, TitleColor = Muted };
@@ -219,12 +220,13 @@ internal sealed partial class MatrixPage : ContentPage
         footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         footer.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         footer.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        status.MaxLines = refreshStatus.MaxLines = 1;
-        status.LineBreakMode = refreshStatus.LineBreakMode = LineBreakMode.TailTruncation;
-        status.VerticalOptions = refreshStatus.VerticalOptions = activity.VerticalOptions = LayoutOptions.Center;
+        status.MaxLines = refreshStatus.MaxLines = excuseStatus.MaxLines = 1;
+        status.LineBreakMode = refreshStatus.LineBreakMode = excuseStatus.LineBreakMode = LineBreakMode.TailTruncation;
+        status.VerticalOptions = refreshStatus.VerticalOptions = excuseStatus.VerticalOptions = activity.VerticalOptions = LayoutOptions.Center;
         footer.Add(activity);
         footer.Add(status, 1);
         footer.Add(refreshStatus, 1);
+        footer.Add(excuseStatus, 1);
         footer.Add(cancel, 2);
         footer.Add(reconnect, 2);
         loadingBar.Margin = new Thickness(0, 3, 0, 0);
@@ -541,6 +543,7 @@ internal sealed partial class MatrixPage : ContentPage
         try { opened = await RunAsync(LoadAsync, background); }
         finally { changingSession = false; }
         if (!opened || !refreshView) return;
+        if (pendingExcuses.Count > 0) _ = RefreshExcusesAsync();
         if (section == Section.Classes) await RefreshDeckAsync(force);
         else await OpenDailyMatrixAsync(force);
 
@@ -624,6 +627,13 @@ internal sealed partial class MatrixPage : ContentPage
             await LoadClassesAsync(force: true);
             return;
         }
+        if (pendingExcuses.Count > 0)
+        {
+            await RefreshExcusesAsync();
+            return;
+        }
+        excuseSyncIssue = null;
+        UpdateFooter();
         if (section == Section.Classes) await RefreshDeckAsync(force: true);
         else await OpenDailyMatrixAsync(force: true);
     }
@@ -991,6 +1001,8 @@ internal sealed partial class MatrixPage : ContentPage
             signInRequired = false;
             signInDismissed = true;
             await StopDeckRefreshAsync();
+            pendingExcuses.Clear();
+            excuseSyncIssue = null;
             refreshReports = null;
             if (refreshBrowser.Browser is { RendererGone: false } refreshView) refreshView.Go("about:blank");
             schoolYear = selectedRange = null;
@@ -1022,6 +1034,7 @@ internal sealed partial class MatrixPage : ContentPage
             if (ReferenceEquals(source, dayDetails)) source?.SetOpeningExcuse(false);
             excuseSource = null;
             editingClassId = null;
+            if (pendingExcuses.Count > 0) _ = RefreshExcusesAsync();
         }
 
         async Task EditAsync(AndroidReports service, IProgress<string> progress, CancellationToken token)
@@ -1036,10 +1049,12 @@ internal sealed partial class MatrixPage : ContentPage
                 await service.ReadAbsenceActionsAsync(matrix, student, day, progress, token);
             token.ThrowIfCancellationRequested();
             if (!IsCurrent()) return;
-            var choices = AbsenceActions.Available(rows);
+            var available = AbsenceActions.Available(rows);
+            var choices = available.Where(row => !pendingExcuses.ContainsKey((matrix.ClassId, row.Id))).ToArray();
             if (choices.Length == 0)
             {
-                status.Text = rows.Length == 0 ? "Keine passende WebUntis-Abwesenheit gefunden." :
+                status.Text = available.Length > 0 ? "Diese Entschuldigung wird gerade mit WebUntis abgeglichen." :
+                    rows.Length == 0 ? "Keine passende WebUntis-Abwesenheit gefunden." :
                     "WebUntis bietet für diese Einträge keinen Entschuldigungsdialog an.";
                 await NoticeAsync("Entschuldigung", status.Text);
                 return;
@@ -1054,35 +1069,14 @@ internal sealed partial class MatrixPage : ContentPage
             }
             token.ThrowIfCancellationRequested();
             if (index < 0 || !IsCurrent()) return;
-            if (!await service.ShowExcuseAsync(matrix, student, day, choices[index], progress, token)) return;
-
-            matrix.PreparedAbsences = null;
-            if (deckCard?.Matrix is { } existing) existing.PreparedAbsences = null;
-            progress.Report($"{matrix.ClassName} · Fehlzeiten werden neu gelesen …");
-            var choice = new Student(matrix.ClassId, matrix.ClassName);
-            var range = new ReportRange(matrix.From, matrix.To);
-            SetTransferProgress(0, AndroidReports.MatrixSteps);
-            var data = await service.MatrixAsync(choice, range, progress, token, allowSignIn: false, afterExcuse: true,
-                reportProgress: SetTransferProgress);
-            var updated = await Task.Run(data.Build, token);
-            token.ThrowIfCancellationRequested();
-            if (!updated.HasAbsenceReport)
-                throw new InvalidOperationException("Die aktualisierten Fehlzeiten konnten noch nicht gelesen werden. Aktualisiere die Klasse erneut.");
-            var sameDeckRange = deckCard?.Matrix is { } deckMatrix && deckMatrix.From == range.From && deckMatrix.To == range.To;
-            if (updated.HasCompleteReports && sameDeckRange && deckCard != null)
-                await RememberDeckMatrixAsync(service, choice, deckCard, updated, data, token);
-            if (!ReferenceEquals(card, deckCard) || !updated.HasCompleteReports) card.ShowMatrix(updated);
-            if (matrixCard != card && matrixCard.Matrix is { } daily && daily.ClassId == matrix.ClassId)
-            {
-                if (daily.From == range.From && daily.To == range.To) matrixCard.ShowMatrix(updated);
-                else matrixCard.Clear(choice.Name, "Aktualisiere die Tagesmatrix, um die neuen Fehlzeiten zu laden.");
-            }
-            SetTransferProgress(AndroidReports.MatrixSteps, AndroidReports.MatrixSteps);
-            status.Text = $"{choice.Name} · Aktuelle Fehlzeiten aus WebUntis geladen";
+            var row = choices[index];
+            var save = await service.ShowExcuseAsync(matrix, student, day, row, progress, token);
+            if (save.Saved) QueueExcuse(matrix, student, day, row, save.Status);
         }
 
         bool IsCurrent() => !detailTransition && ReferenceEquals(source, dayDetails) &&
-            ReferenceEquals(card, ActiveCard) && ReferenceEquals(card.Matrix, matrix);
+            ReferenceEquals(card, ActiveCard) && card.Matrix is { } current && current.ClassId == matrix.ClassId &&
+            current.Cells.ContainsKey((student.Id, day));
     }
 
     private static bool HasExcusableEntries(DayCell cell) =>
@@ -1157,7 +1151,7 @@ internal sealed partial class MatrixPage : ContentPage
 
     private MatrixCard CreateMatrixCard(bool inDeck = false)
     {
-        var card = new MatrixCard(inDeck);
+        var card = new MatrixCard(inDeck, IsExcusePending);
         card.DaySelected += async (_, student, day, _) => await ShowDayDetailsAsync(card, student.Id, day);
         card.AbsenceRequested += async (matrix, student, day, _) => await OpenCellExcuseAsync(card, matrix, student, day);
         card.NotesRequested += async data =>
@@ -1309,14 +1303,17 @@ internal sealed partial class MatrixPage : ContentPage
     private void UpdateFooter()
     {
         var showRefresh = deckRefresh != null && !InteractiveTransferVisible;
-        status.IsVisible = !showRefresh;
+        var showExcuseStatus = !VisibleTransfer && (pendingExcuses.Count > 0 || excuseSyncIssue != null);
+        excuseStatus.Text = excuseSyncIssue ?? "Entschuldigungen warten auf Abgleich …";
+        excuseStatus.IsVisible = showExcuseStatus;
+        status.IsVisible = !showRefresh && !showExcuseStatus;
         refreshStatus.IsVisible = showRefresh;
         var progress = showRefresh ? deckProgress : transferProgress;
         loadingBar.IsVisible = VisibleTransfer && progress.HasValue;
         if (progress is { } fraction) loadingBar.Progress = fraction;
         activity.IsVisible = activity.IsRunning = VisibleTransfer && !loadingBar.IsVisible;
         var landscape = workspace.Height > 0 && workspace.Width > workspace.Height;
-        footer.IsVisible = reconnect.IsVisible || VisibleTransfer ||
+        footer.IsVisible = reconnect.IsVisible || VisibleTransfer || showExcuseStatus ||
             (!landscape && !headingCollapsed && !string.IsNullOrWhiteSpace(status.Text));
     }
 

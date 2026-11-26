@@ -137,17 +137,19 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
                 throw new InvalidOperationException(waitingForLogin ? "Die WebUntis-Anmeldeseite ist derzeit nicht erreichbar."
                     : "Die WebUntis-Berichte sind derzeit nicht erreichbar.");
 
-            if (!view.Navigating && state is { Stage: "browserWelcome", BrowserLoginX: { } x, BrowserLoginY: { } y })
+            if (!view.Navigating && state?.Stage == "browserWelcome")
             {
+                if (!waitingForLogin) await OpenLoginAsync(navigate: false);
                 try
                 {
-                    if (await view.TapAsync(x, y, token))
+                    if (state is { BrowserLoginX: { } x, BrowserLoginY: { } y } && await view.TapAsync(x, y, token))
                     {
                         browserPromptHandled = true;
                         continueRequested = false;
                     }
                 }
                 catch (TimeoutException) { }
+                if (!loginShown && waiting.Elapsed >= LoginConfirmationTimeout) ShowManualLogin();
             }
             else if (waitingForLogin)
             {
@@ -647,7 +649,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
             from = selection?.From.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             to = selection?.To.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             kind = kind.ToString(), excusedOnly = selection?.ExcusedOnly == true, includeClasses, roster, exportId, waitForFormStamp,
-            allowLandingAsSignedIn = false, openBrowserLogin, mobileLogin,
+            allowLandingAsSignedIn = false, openBrowserLogin, mobileLogin, mobile = true,
             targetSchoolYear = year, className, lateOnly = kind == ReportKind.Lateness,
             absencePerson, absenceDay, absenceRow, editorId, classAbsences, mobileEditor = editorId != null,
             lesson, mobileLesson = true

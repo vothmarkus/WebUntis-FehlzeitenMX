@@ -22,7 +22,7 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Version 0.6.17
+## Android-Version 0.6.18
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
@@ -40,7 +40,7 @@ Unter **Meine Klassen** liegen die ausgewählten Matrizen in einem Stapel. Früh
 
 Die Matrizen öffnen sich bei den neuesten Unterrichtstagen. Wische seitlich für weitere Tage und vertikal für weitere Namen. Die Namensspalte und die Datumszeile bleiben sichtbar. Beim Scrollen zu weiteren Namen schiebt sich die App-Überschrift mit Logo und Menü nach oben. Beim Zurückscrollen fährt sie wieder ein.
 
-Tippe für die Tagesdetails auf eine Zelle und oben rechts auf **×** zum Schließen. Zoome mit zwei Fingern. In einer als **Klassenlehrer** markierten Klasse öffnest du das Entschuldigungsformular durch langes Drücken auf die Zelle oder über den Stift oben rechts in den Tagesdetails. Gibt es mehrere bearbeitbare Abwesenheiten für diese Person und diesen Tag, kannst du den Eintrag auswählen. Die App hält verfügbare Einträge verschlüsselt vor und bereitet die WebUntis-Abwesenheitsliste für die aktive Klasse im Hintergrund vor. Sie öffnet den ausgewählten Eintrag aus dieser Liste, sobald er online bestätigt ist. Ist die Sitzung abgelaufen, zeigt die App die WebUntis-Anmeldung und öffnet anschließend den ausgewählten Eintrag. Das Formular passt sich bei jedem Öffnen automatisch an die Bildschirmbreite an. Zoome bei Bedarf mit zwei Fingern. Im Formular kannst du bis zu **Speichern** oder **Schließen** scrollen. Nach dem Speichern lädt die App die betroffenen Fehlzeiten erneut.
+Tippe für die Tagesdetails auf eine Zelle und oben rechts auf **×** zum Schließen. Zoome mit zwei Fingern. In einer als **Klassenlehrer** markierten Klasse öffnest du das Entschuldigungsformular durch langes Drücken auf die Zelle oder über den Stift oben rechts in den Tagesdetails. Gibt es mehrere bearbeitbare Abwesenheiten für diese Person und diesen Tag, kannst du den Eintrag auswählen. Die App hält verfügbare Einträge verschlüsselt vor und bereitet die WebUntis-Abwesenheitsliste für die aktive Klasse im Hintergrund vor. Sie öffnet den ausgewählten Eintrag aus dieser Liste, sobald er online bestätigt ist. Ist die Sitzung abgelaufen, zeigt die App die WebUntis-Anmeldung und öffnet anschließend den ausgewählten Eintrag. Das Formular passt sich bei jedem Öffnen automatisch an die Bildschirmbreite an. Zoome bei Bedarf mit zwei Fingern. Im Formular kannst du bis zu **Speichern** oder **Schließen** scrollen. Nach **Speichern** erscheint bei einer gewählten Entschuldigung zunächst `E*` in der Matrix. Du kannst weitere Abwesenheiten bearbeiten, während die App die Einträge und Berichte im Hintergrund abgleicht. Sobald der Abgleich abgeschlossen ist, zeigt die Matrix den bestätigten Tagesstand. Wenn WebUntis eine Änderung nicht bestätigt, meldet die App das in der Statuszeile.
 
 **Meine Klassen** zeigt das Schuljahr bis zum jüngsten gespeicherten Abruf. In der **Tagesmatrix** kannst du über **Zeitraum** den Anfangs- und Endtag innerhalb dieses Schuljahres frei wählen. **Schuljahr bis heute** setzt den Zeitraum zurück.
 
