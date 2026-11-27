@@ -56,13 +56,10 @@ function reportCommand(request) {
 
     const loginForm = doc => [...doc.querySelectorAll('input[type="password"]')].find(visible);
     if (request.mobileLogin === true) fitMobileLogin(documents.map(loginForm).find(Boolean));
-    if (request.openBrowserLogin === true && !documents.some(loginForm) &&
-        /willkommen bei web\s*untis/i.test(clean(document.body?.innerText || document.body?.textContent))) {
-        const actions = [...document.querySelectorAll('a,button,[role="button"]')].filter(node =>
-            visible(node) && /^(?:im browser (?:öffnen|fortfahren)|continue in (?:the )?browser)$/i.test(
-                clean(node.innerText || node.textContent || node.getAttribute("aria-label"))));
-        if (actions.length === 1) {
-            const target = pointerTarget(actions[0], "nearest");
+    if (request.openBrowserLogin === true && !documents.some(loginForm)) {
+        const action = browserLoginAction();
+        if (action) {
+            const target = pointerTarget(action, "nearest");
             return { stage: "browserWelcome", browserLoginX: target?.x, browserLoginY: target?.y };
         }
     }
@@ -238,6 +235,27 @@ function reportCommand(request) {
         return rect.width > 0 && rect.height > 0 && hit && element.contains(hit) &&
             (!frame || document.elementFromPoint(x, y) === frame) ? { x, y } : null;
     }
+
+    function browserLoginAction() {
+        const controls = 'a,button,[role="button"],[role="link"]';
+        const label = /^(?:im browser (?:öffnen|fortfahren)|(?:open|continue) in (?:the )?browser)$/i;
+        const matchesLabel = node => [node.getAttribute("aria-label"), node.innerText || node.textContent]
+            .some(text => label.test(clean(text).normalize("NFC")));
+        const matches = documents.flatMap(doc => {
+            const links = [...doc.querySelectorAll(controls)].filter(available);
+            if (links.length || !/willkommen bei web\s*untis|den stundenplan immer dabei/i.test(clean(doc.body?.innerText)))
+                return links;
+            return [...doc.querySelectorAll("div,p,span")].filter(available);
+        });
+        const actions = matches.filter(node => !matches.some(child => child !== node && node.contains(child)));
+        return actions.length === 1 ? actions[0] : null;
+
+        function available(node) {
+            return visible(node) && !node.closest('[hidden],[inert],[aria-hidden="true"],[aria-disabled="true"],:disabled') &&
+                node.ownerDocument.defaultView.getComputedStyle(node).visibility === "visible" && matchesLabel(node);
+        }
+    }
+
     function selectYearPreset(form, dates, selectValue) {
         const isSchoolYear = label => /^(aktuelles schuljahr|current school year)$/i.test(clean(label));
         for (const control of form.querySelectorAll("select")) {
