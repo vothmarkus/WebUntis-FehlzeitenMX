@@ -36,11 +36,11 @@ internal sealed class MatrixCard : ContentView
     public event Action<int?>? CardDragEnded;
     public event Action? ClassPickerRequested;
 
-    public MatrixCard(bool inDeck = false)
+    public MatrixCard(bool inDeck, Func<string, string, DateOnly, bool> isExcusePending)
     {
         this.inDeck = inDeck;
         var deckTableInset = inDeck ? WorkspaceSideInset + CardInset : 0;
-        canvas = new MatrixCanvas(inDeck, deckTableInset);
+        canvas = new MatrixCanvas(inDeck, deckTableInset) { IsExcusePending = isExcusePending };
         canvas.DaySelected += (student, day, cell) =>
         {
             if (Matrix is { } current) DaySelected?.Invoke(current, student, day, cell);
@@ -153,6 +153,8 @@ internal sealed class MatrixCard : ContentView
         canvas.SetMatrix(value, sameClass);
         UpdateVisibility();
     }
+
+    public void RedrawCells() => canvas.Invalidate();
 
     public void SetDeckPosition(int index, int count)
     {

@@ -26,6 +26,7 @@ internal sealed class MobileWebView : IDisposable
     private bool disposed;
     private bool rendererGone;
     private bool editing;
+    private string? mainDocumentAddress;
 
     public MobileWebView(FrameLayout host)
     {
@@ -55,6 +56,7 @@ internal sealed class MobileWebView : IDisposable
     public string? Address => disposed || rendererGone ? null : reports?.Url;
     public string? LoginAddress => disposed || rendererGone ? null : (loginPopup ?? reports)?.Url;
     public int MainStatus { get; private set; }
+    public bool MainLoadFailed { get; private set; }
     public bool Navigating { get; private set; }
     public long NavigationRevision { get; private set; }
     public bool ShowingLogin { get; private set; }
@@ -67,10 +69,12 @@ internal sealed class MobileWebView : IDisposable
     public void Go(string address)
     {
         var web = ReportWindow;
+        web.StopLoading();
+        mainDocumentAddress = address;
         MainStatus = 0;
+        MainLoadFailed = false;
         Navigating = true;
         NavigationRevision++;
-        web.StopLoading();
         web.LoadUrl(address);
     }
 
@@ -110,7 +114,36 @@ internal sealed class MobileWebView : IDisposable
     public async Task<bool> TryLoginFormAsync(WebUntisLogin? login, CancellationToken token)
     {
         if (Navigating || !WebUntisReports.IsSchoolAddress(Address) || loginPopup != null) return false;
-        return await EvaluateAsync(WebUntisLogin.FormScript(login), token) == "true";
+        if (login == null) return await EvaluateAsync(WebUntisLogin.FormScript("probe"), token) == "true";
+        var revision = NavigationRevision;
+        var attempt = Guid.NewGuid().ToString("N");
+        var submitted = false;
+        try
+        {
+            if (await EvaluateAsync(WebUntisLogin.FormScript("fill", login, attempt), token) != "true") return false;
+            for (var retry = 0; retry < 5 && IsSamePage(); retry++)
+            {
+                await Task.Delay(100, token);
+                if (!IsSamePage()) break;
+                var result = await EvaluateAsync(WebUntisLogin.FormScript("submit", login, attempt), token);
+                if (result == "null") continue;
+                submitted = result == "true";
+                return submitted;
+            }
+            return false;
+        }
+        finally
+        {
+            if (!submitted && IsSamePage())
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                try { await EvaluateAsync(WebUntisLogin.FormScript("clear", login, attempt), cleanup.Token); }
+                catch (Exception error) when (error is TimeoutException or OperationCanceledException or InvalidOperationException) { }
+            }
+        }
+
+        bool IsSamePage() => !Navigating && NavigationRevision == revision && loginPopup == null &&
+            WebUntisReports.IsSchoolAddress(Address);
     }
 
     public async Task<bool> FitEditorOnOpenAsync(CancellationToken token)
@@ -372,13 +405,24 @@ internal sealed class MobileWebView : IDisposable
             Navigating = !finished;
             if (!finished)
             {
+                mainDocumentAddress = address;
                 MainStatus = 0;
+                MainLoadFailed = false;
                 NavigationRevision++;
             }
         }
         if (ReferenceEquals(view, loginPopup ?? reports)) LoginAddressChanged?.Invoke(address);
         if (finished && PendingExport is { } export && export.Windows.Contains(view) && WebUntisReports.IsSchoolAddress(address))
             _ = InspectPopupAsync(view, export);
+    }
+
+    private bool IsCurrentDocument(NativeWebView view, string? address)
+    {
+        // A hash route may already have changed by the time WebView reports the document as ready.
+        var document = WithoutFragment(address);
+        return document != null && (WithoutFragment(mainDocumentAddress) == document || WithoutFragment(view.Url) == document);
+
+        static string? WithoutFragment(string? url) => url?.Split('#', 2)[0];
     }
 
     private async Task InspectPopupAsync(NativeWebView view, Export export)
@@ -433,7 +477,24 @@ internal sealed class MobileWebView : IDisposable
 
         public override void OnPageFinished(NativeWebView? view, string? url)
         {
-            if (view != null) owner.OnNavigation(view, url, finished: true);
+            if (view != null && (!ReferenceEquals(view, owner.reports) || owner.IsCurrentDocument(view, url)))
+                owner.OnNavigation(view, url, finished: true);
+        }
+
+        public override void OnPageCommitVisible(NativeWebView? view, string? url)
+        {
+            if (view != null && ReferenceEquals(view, owner.reports) && owner.IsCurrentDocument(view, url))
+                owner.OnNavigation(view, url, finished: true);
+        }
+
+        public override void OnReceivedError(NativeWebView? view, IWebResourceRequest? request, WebResourceError? error)
+        {
+            if (view != null && ReferenceEquals(view, owner.reports) && request?.IsForMainFrame == true &&
+                owner.IsCurrentDocument(view, request.Url?.ToString()))
+            {
+                owner.MainLoadFailed = true;
+                owner.Navigating = false;
+            }
         }
 
         public override void OnReceivedHttpError(NativeWebView? view, IWebResourceRequest? request, WebResourceResponse? errorResponse)

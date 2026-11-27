@@ -13,12 +13,10 @@ internal sealed class WebUntisSignInRequiredException()
 internal sealed partial class AndroidReports(MobileWebView view, Action<bool> showLogin, Func<bool, Task> showExcuse,
     Func<CancellationToken, Task> sessionConfirmed, AndroidMatrixCache? loginStore = null) : IReportSupplement
 {
-    private static readonly TimeSpan LoginConfirmationTimeout = TimeSpan.FromSeconds(10);
     private static readonly Uri School = new(Origin);
     private readonly Dictionary<int, SchoolPeriod[]> schoolPeriods = [];
     private readonly SemaphoreSlim supplements = new(1);
     private bool reload = true;
-    private bool continueRequested;
     private bool allowMatrixSignIn;
     private Student? currentClass;
     internal static int MatrixSteps => Automatic.Count + 1;
@@ -92,171 +90,6 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
         reload = true;
         schoolPeriods.Clear();
         await view.SignOutAsync();
-    }
-
-    public void ContinueAfterLogin() => continueRequested = true;
-
-    private async Task<ReportState> OpenReportsAsync(IProgress<string> progress, CancellationToken token,
-        bool includeClasses = false, bool startWithLogin = false, bool allowSignIn = true)
-    {
-        var waiting = Stopwatch.StartNew();
-        var waitingForLogin = false;
-        var loginShown = false;
-        var redirected = false;
-        var browserPromptHandled = false;
-        var automaticConsidered = false;
-        WebUntisLogin? automatic = null;
-        WebUntisLogin? submitted = null;
-        continueRequested = false;
-        if (startWithLogin) await OpenLoginAsync(navigate: true);
-        else
-        {
-            progress.Report("WebUntis-Berichte werden geöffnet …");
-            if (reload || !IsPage(Address)) view.Go(Address);
-        }
-
-        while (true)
-        {
-            token.ThrowIfCancellationRequested();
-            if (view.RendererGone)
-                throw new InvalidOperationException(MobileWebView.RendererMessage);
-            var state = await ReadReportPageAsync(includeClasses, !browserPromptHandled, waitingForLogin, token);
-            if (state?.Stage == "reports" && !view.Navigating)
-            {
-                if (submitted != null && !loginShown && loginStore != null)
-                {
-                    try { await loginStore.SetLoginAttemptAsync(submitted, null, token); }
-                    catch (Exception error) when (AndroidMatrixCache.StorageFailure(error)) { }
-                }
-                showLogin(false);
-                reload = false;
-                await sessionConfirmed(token);
-                return state;
-            }
-            if (!view.Navigating && view.MainStatus >= 500)
-                throw new InvalidOperationException(waitingForLogin ? "Die WebUntis-Anmeldeseite ist derzeit nicht erreichbar."
-                    : "Die WebUntis-Berichte sind derzeit nicht erreichbar.");
-
-            if (!view.Navigating && state is { Stage: "browserWelcome", BrowserLoginX: { } x, BrowserLoginY: { } y })
-            {
-                try
-                {
-                    if (await view.TapAsync(x, y, token))
-                    {
-                        browserPromptHandled = true;
-                        continueRequested = false;
-                    }
-                }
-                catch (TimeoutException) { }
-            }
-            else if (waitingForLogin)
-            {
-                if (!view.Navigating && (continueRequested || state is { Stage: "signedIn", AtReports: false }))
-                {
-                    waitingForLogin = false;
-                    OpenReportPage();
-                }
-                else if (!loginShown && automatic != null)
-                {
-                    if (!view.Navigating && state?.Stage == "login" && submitted == null)
-                        await SubmitAutomaticLoginAsync();
-                    if (!loginShown && (state?.Stage == "external" || waiting.Elapsed >= LoginConfirmationTimeout))
-                        ShowManualLogin();
-                }
-            }
-            else if (!view.Navigating)
-            {
-                if (state?.Stage is "login" or "external" || view.MainStatus == 401)
-                    await OpenLoginAsync(navigate: state?.Stage is not ("login" or "external"));
-                else if (view.MainStatus == 403 || state?.Stage == "denied")
-                    throw new InvalidOperationException("WebUntis meldet fehlende Berechtigung für die Klassenbuchberichte.");
-                else if (state is { Stage: "signedIn", AtReports: false } && !redirected)
-                    OpenReportPage();
-            }
-
-            if (!waitingForLogin && waiting.Elapsed > TimeSpan.FromSeconds(28))
-            {
-                if (!allowSignIn || loginShown)
-                    throw new TimeoutException("WebUntis hat das Berichtsformular nicht geladen. Melde dich erneut an und tippe danach auf Weiter.");
-                await OpenLoginAsync(navigate: true);
-            }
-            await Task.Delay(240, token);
-        }
-
-        async Task OpenLoginAsync(bool navigate)
-        {
-            if (!allowSignIn) throw new WebUntisSignInRequiredException();
-            waitingForLogin = true;
-            continueRequested = false;
-            redirected = false;
-            browserPromptHandled = false;
-            waiting.Restart();
-            if (!automaticConsidered && loginStore != null)
-            {
-                automaticConsidered = true;
-                try
-                {
-                    if (await loginStore.ReadLoginAsync(token) is { CanRetry: true } saved)
-                        automatic = saved;
-                }
-                catch (Exception error) when (AndroidMatrixCache.StorageFailure(error)) { }
-            }
-            if (navigate) view.Go(WebUntisLogin.Address);
-            if (automatic == null || submitted != null) ShowManualLogin();
-            else progress.Report("Die WebUntis-Anmeldung wird automatisch erneuert …");
-        }
-
-        async Task SubmitAutomaticLoginAsync()
-        {
-            if (automatic is not { } login || loginStore == null) return;
-            try
-            {
-                if (!await view.TryLoginFormAsync(null, token)) return;
-                var triedAt = DateTimeOffset.UtcNow;
-                if (await loginStore.SetLoginAttemptAsync(login, triedAt, token))
-                {
-                    var pending = login with { LastAttemptAt = triedAt };
-                    if (await view.TryLoginFormAsync(login, token))
-                    {
-                        submitted = pending;
-                        waiting.Restart();
-                        return;
-                    }
-                    await loginStore.SetLoginAttemptAsync(pending, null, token);
-                }
-            }
-            catch (Exception error) when (error is TimeoutException || AndroidMatrixCache.StorageFailure(error)) { }
-            ShowManualLogin();
-        }
-
-        void ShowManualLogin()
-        {
-            automatic = null;
-            loginShown = true;
-            progress.Report("Melde dich auf der WebUntis-Seite an.");
-            showLogin(true);
-        }
-
-        void OpenReportPage()
-        {
-            continueRequested = false;
-            redirected = true;
-            progress.Report("WebUntis-Berichte werden geöffnet …");
-            view.Go(Address);
-            waiting.Restart();
-        }
-    }
-
-    private async Task<ReportState?> ReadReportPageAsync(bool includeClasses, bool openBrowserLogin, bool mobileLogin,
-        CancellationToken token)
-    {
-        if (view.Navigating) return null;
-        try
-        {
-            return await CommandAsync("probe", token, includeClasses: includeClasses,
-                openBrowserLogin: openBrowserLogin, mobileLogin: mobileLogin);
-        }
-        catch (TimeoutException) { return null; }
     }
 
     private async Task<ReportRange?> ReadSchoolYearAsync(CancellationToken token)
@@ -647,7 +480,7 @@ internal sealed partial class AndroidReports(MobileWebView view, Action<bool> sh
             from = selection?.From.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             to = selection?.To.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             kind = kind.ToString(), excusedOnly = selection?.ExcusedOnly == true, includeClasses, roster, exportId, waitForFormStamp,
-            allowLandingAsSignedIn = false, openBrowserLogin, mobileLogin,
+            allowLandingAsSignedIn = false, openBrowserLogin, mobileLogin, mobile = true,
             targetSchoolYear = year, className, lateOnly = kind == ReportKind.Lateness,
             absencePerson, absenceDay, absenceRow, editorId, classAbsences, mobileEditor = editorId != null,
             lesson, mobileLesson = true

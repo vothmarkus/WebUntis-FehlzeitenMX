@@ -47,7 +47,7 @@ internal sealed class ClassSelectionPage : ContentPage
 
     public ClassSelectionPage(Student[] classes, ClassSelection selection, Func<ClassSelection, Task> apply)
     {
-        this.classes = classes;
+        this.classes = BktClassOrder.Sort(classes);
         mine = new(selection.Mine, StringComparer.Ordinal);
         teachers = new(selection.Teachers, StringComparer.Ordinal);
         SafeAreaEdges = SafeAreaEdges.All;

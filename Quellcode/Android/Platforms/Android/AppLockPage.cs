@@ -7,15 +7,27 @@ namespace WebUntisAuswertung.Mobile;
 
 internal sealed class AppLockPage : ContentPage
 {
-    private const string Locked = "Fehlzeiten MX ist gesperrt.";
-    private readonly Button unlock = MobileStyle.Button("Entsperren", primary: true);
-    private readonly Label message = MobileStyle.Label(Locked, 14, Muted);
-
     public AppLockPage()
     {
         Title = "Fehlzeiten MX";
         BackgroundColor = Surface;
         SafeAreaEdges = SafeAreaEdges.All;
+        Content = Gate;
+    }
+
+    public AppLockView Gate { get; } = new();
+}
+
+internal sealed class AppLockView : Grid
+{
+    private const string Locked = "Fehlzeiten MX ist gesperrt.";
+    private readonly Button unlock = MobileStyle.Button("Entsperren", primary: true);
+    private readonly Label message = MobileStyle.Label(Locked, 14, Muted);
+
+    public AppLockView()
+    {
+        BackgroundColor = Surface;
+        Padding = 20;
         unlock.Clicked += (_, _) => UnlockRequested?.Invoke();
         var card = Card(new VerticalStackLayout
         {
@@ -24,7 +36,7 @@ internal sealed class AppLockPage : ContentPage
         }, new Thickness(20));
         card.MaximumWidthRequest = 420;
         card.VerticalOptions = LayoutOptions.Center;
-        Content = new Grid { Padding = 20, Children = { card } };
+        Children.Add(card);
     }
 
     public event Action? UnlockRequested;

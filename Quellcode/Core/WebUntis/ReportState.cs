@@ -59,6 +59,7 @@ internal sealed class ReportState
     public bool AbsenceEditorVisible { get; set; }
     public bool AbsenceEditorClosed { get; set; }
     public bool AbsenceEditorSaveRequested { get; set; }
+    public string? AbsenceEditorRequestedStatus { get; set; }
     public int EditorWidth { get; set; }
     public int EditorHeight { get; set; }
     public bool TimesReady { get; set; }
