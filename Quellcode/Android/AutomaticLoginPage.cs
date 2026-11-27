@@ -28,7 +28,10 @@ internal sealed class AutomaticLoginPage : ContentPage
     private readonly Label status = MobileStyle.Label("", 13, Muted);
     private readonly Func<WebUntisLogin?, Task<bool>> store;
     private readonly Func<Task> reconnect;
+    private readonly Grid form;
     private bool working;
+
+    internal AppLockView Gate { get; } = new() { IsVisible = false };
 
     public AutomaticLoginPage(WebUntisLogin? saved, Func<WebUntisLogin?, Task<bool>> store, Func<Task> reconnect)
     {
@@ -64,16 +67,22 @@ internal sealed class AutomaticLoginPage : ContentPage
                 username, password, status, save, forget
             }
         });
-        var layout = new Grid
+        form = new Grid
         {
             Padding = new Thickness(12, 8),
             RowSpacing = 12,
             RowDefinitions = { new(GridLength.Auto), new(GridLength.Star) }
         };
-        layout.Add(header);
-        layout.Add(new ScrollView { Content = fields }, 0, 1);
-        Content = layout;
-        close.Clicked += async (_, _) => await Navigation.PopModalAsync();
+        form.Add(header);
+        form.Add(new ScrollView { Content = fields }, 0, 1);
+        Content = new Grid { Children = { form, Gate } };
+        close.Clicked += async (_, _) =>
+        {
+            if (Gate.IsVisible || working) return;
+            working = true;
+            try { await Navigation.PopModalAsync(); }
+            finally { working = false; }
+        };
         save.Clicked += async (_, _) =>
         {
             var login = new WebUntisLogin(username.Text?.Trim() ?? "", password.Text ?? "");
@@ -83,7 +92,26 @@ internal sealed class AutomaticLoginPage : ContentPage
         forget.Clicked += async (_, _) => await ChangeAsync(null);
     }
 
-    protected override bool OnBackButtonPressed() => working || base.OnBackButtonPressed();
+    internal bool TryLock()
+    {
+        if (working) return false;
+        SetLocked(true);
+        return true;
+    }
+
+    internal void Unlock() => SetLocked(false);
+
+    private void SetLocked(bool locked)
+    {
+        // Keep the same native entries attached while Android delivers the autofill result.
+        Gate.IsVisible = locked;
+        form.InputTransparent = locked;
+        if (form.Handler?.PlatformView is NativeView view)
+            view.ImportantForAccessibility = locked ? Android.Views.ImportantForAccessibility.NoHideDescendants
+                : Android.Views.ImportantForAccessibility.Auto;
+    }
+
+    protected override bool OnBackButtonPressed() => Gate.IsVisible || working || base.OnBackButtonPressed();
 
     private static void SetAutofillHint(object? sender, EventArgs args)
     {
@@ -102,7 +130,7 @@ internal sealed class AutomaticLoginPage : ContentPage
 
     private async Task ChangeAsync(WebUntisLogin? login)
     {
-        if (working || Navigation.ModalStack.LastOrDefault() != this) return;
+        if (Gate.IsVisible || working || Navigation.ModalStack.LastOrDefault() != this) return;
         working = true;
         save.IsEnabled = forget.IsEnabled = close.IsEnabled = false;
         try

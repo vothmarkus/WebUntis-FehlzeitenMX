@@ -369,15 +369,36 @@ internal sealed partial class MatrixPage : ContentPage
         refreshTimer.Start();
     }
 
-    internal async Task SealAsync()
+    internal Task SuspendForLoginAsync()
     {
-        if (locked) return;
+        var finished = LockWorkspace();
+        transfer?.Cancel();
+        deckRefresh?.Cancel();
+        return finished;
+    }
+
+    internal void ResumeAfterLoginUnlock()
+    {
+        locked = false;
+        Content.IsVisible = true;
+        UpdateControls();
+        ResumeRefresh();
+    }
+
+    private Task LockWorkspace()
+    {
         locked = true;
         Content.IsVisible = false;
         activeDialog?.Dismiss();
         refreshTimer?.Stop();
         absencePreloadTimer?.Stop();
-        var finished = Task.WhenAll(transferFinished?.Task ?? Task.CompletedTask, deckRefreshFinished?.Task ?? Task.CompletedTask);
+        return Task.WhenAll(transferFinished?.Task ?? Task.CompletedTask, deckRefreshFinished?.Task ?? Task.CompletedTask);
+    }
+
+    internal async Task SealAsync()
+    {
+        if (locked) return;
+        var finished = LockWorkspace();
         lifetime.Cancel();
         try
         {

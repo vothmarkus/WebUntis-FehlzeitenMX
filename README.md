@@ -22,7 +22,7 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Version 0.6.23
+## Android-Version 0.6.24
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
@@ -36,7 +36,7 @@ Beim ersten Start erscheint nach dem Entsperren die Auswahl für die WebUntis-An
 
 **Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Die App behält ihr WebUntis-Profil bei App-Sperre und Updates. Fehlende Sitzungscookies ergänzt sie aus der verschlüsselten Sicherung. Verlangt WebUntis eine neue Anmeldung, öffnet sich die Login-Seite aus der Matrix. Bei Bedarf kannst du über **Anmelden** in der Statuszeile erneut starten.
 
-Unter **Einstellungen → Anmeldung → Automatische Anmeldung** kannst du deine Zugangsdaten für die direkte WebUntis-Anmeldung hinterlegen. Ab Android 8 kann der eingestellte Passwortmanager Benutzername und Passwort in diesem Formular ausfüllen. Die App speichert sie verschlüsselt auf diesem Gerät und erneuert eine abgelaufene Sitzung nach dem Entsperren. Zusätzliche Bestätigungen und externe Schulanmeldungen erledigst du auf der angezeigten Anmeldeseite. **Zugangsdaten löschen** und **Abmelden** entfernen die gespeicherten Zugangsdaten.
+Unter **Einstellungen → Anmeldung → Automatische Anmeldung** kannst du deine Zugangsdaten für die direkte WebUntis-Anmeldung hinterlegen. Ab Android 8 kann der eingestellte Passwortmanager Benutzername und Passwort in diesem Formular ausfüllen. Nach dem Wechsel zum Passwortmanager führt dich das Entsperren zurück in das geöffnete Formular. Die App speichert die Zugangsdaten verschlüsselt auf diesem Gerät und erneuert eine abgelaufene Sitzung nach dem Entsperren. Zusätzliche Bestätigungen und externe Schulanmeldungen erledigst du auf der angezeigten Anmeldeseite. **Zugangsdaten löschen** und **Abmelden** entfernen die gespeicherten Zugangsdaten.
 
 Die Klassenauswahl sortiert BKT-Kürzel mit gleicher Buchstabengruppe in der Stufenfolge **U, M, O, P, A**. Ein **P** am Ende folgt auf die **1** desselben Kürzels, etwa `ELO1`, `ELOP`, `ELO2`.
 
