@@ -13,6 +13,7 @@ internal sealed partial class MatrixPage : ContentPage
     private const string InitialUpdate = "Für diese Klasse liegt noch kein Datenstand vor.";
     private const string HeadingAnimation = "SlideHeading";
     private const string OverlayAnimation = "SlideOverlay";
+    private const string InitialLoginChoiceKey = "InitialLoginChoiceShown";
     private static readonly GridLength BrowserToolbarHeight = new(62);
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
     private readonly BrowserSurface browser = new();
@@ -315,6 +316,7 @@ internal sealed partial class MatrixPage : ContentPage
         }
         restoreStarted = true;
         var token = lifetime.Token;
+        var loginChoice = -1;
         try
         {
             if (await cache.ReadClassesAsync(token) is { } stored)
@@ -328,6 +330,7 @@ internal sealed partial class MatrixPage : ContentPage
                 var loaded = await LoadSavedMatricesAsync(stored.SchoolYear, token);
                 status.Text = loaded ? "Gespeicherte Daten" : "Ein gespeicherter Datenstand konnte nicht geöffnet werden.";
             }
+            loginChoice = await ChooseInitialLoginAsync(token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
         catch (Exception error) when (AndroidMatrixCache.StorageFailure(error))
@@ -339,7 +342,9 @@ internal sealed partial class MatrixPage : ContentPage
             restoring = false;
             UpdateControls();
         }
-        await CheckSessionAsync();
+        if (loginChoice == 0) await ConfigureAutomaticLoginAsync();
+        else if (loginChoice == 1) await LoadClassesAsync();
+        else await CheckSessionAsync();
     }
 
     protected override void OnDisappearing()
@@ -411,6 +416,22 @@ internal sealed partial class MatrixPage : ContentPage
 
         bool CanCheck() => !ControlsLocked && !menuOpen && !ModalVisible && transfer == null && !sessionReady &&
             !signInDismissed && Window != null;
+    }
+
+    private async Task<int> ChooseInitialLoginAsync(CancellationToken token)
+    {
+        if (locked || Window == null || Preferences.Default.Get(InitialLoginChoiceKey, false)) return -1;
+        try
+        {
+            var hasSetup = classes.Length > 0 || await cache.ReadLoginAsync(token) != null ||
+                await cache.ReadSessionAsync(token) is { Length: > 0 };
+            token.ThrowIfCancellationRequested();
+            var choice = hasSetup ? -1 : await ChooseAsync("Bei WebUntis anmelden",
+                ["Automatische Anmeldung", "Manuelle Anmeldung"], token, closeLabel: "Später");
+            if (!locked && Window != null) Preferences.Default.Set(InitialLoginChoiceKey, true);
+            return choice;
+        }
+        catch (Exception error) when (AndroidMatrixCache.StorageFailure(error)) { return -1; }
     }
 
     private async Task ShowMenuAsync()
@@ -1191,20 +1212,21 @@ internal sealed partial class MatrixPage : ContentPage
         catch (InvalidOperationException) { modalOpen = false; }
     }
 
-    private Task<int> ChooseAsync(string title, string[] labels, CancellationToken token = default) =>
-        ShowDialogAsync(title, labels, null, token);
+    private Task<int> ChooseAsync(string title, string[] labels, CancellationToken token = default,
+        string closeLabel = "Schließen") => ShowDialogAsync(title, labels, null, token, closeLabel);
 
     private Task NoticeAsync(string title, string message) => locked
         ? Task.CompletedTask : ShowDialogAsync(title, null, message, lifetime.Token);
 
-    private async Task<int> ShowDialogAsync(string title, string[]? items, string? message, CancellationToken token)
+    private async Task<int> ShowDialogAsync(string title, string[]? items, string? message, CancellationToken token,
+        string closeLabel = "Schließen")
     {
         if (locked || token.IsCancellationRequested || activeDialog != null ||
             Platform.CurrentActivity is not { IsFinishing: false, IsDestroyed: false } activity) return -1;
         var result = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var builder = new NativeDialog.Builder(activity);
         builder.SetTitle(title);
-        builder.SetNegativeButton("Schließen", (_, _) => result.TrySetResult(-1));
+        builder.SetNegativeButton(closeLabel, (_, _) => result.TrySetResult(-1));
         if (items != null) builder.SetItems(items, (_, args) => result.TrySetResult(args.Which));
         else builder.SetMessage(message);
         using var dialog = builder.Create();

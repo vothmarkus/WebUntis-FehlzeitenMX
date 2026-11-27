@@ -22,7 +22,7 @@ Gespeicherte Matrizen erscheinen nach dem Entsperren mit Datum und Uhrzeit des l
 
 Die [Kurzanleitung](README.txt) und die [Installations- und Buildhinweise](Start-hier.txt) liegen auch dem Setup bei.
 
-## Android-Version 0.6.22
+## Android-Version 0.6.23
 
 Installiere die APK auf einem Gerät mit Android 6 oder neuer und aktueller Android System WebView. Die APK ist für ARM64. Für einen x86-64-Emulator kann die App mit `-p:AndroidAbi=android-x64` gebaut werden.
 
@@ -31,6 +31,8 @@ Die reguläre App heißt **WebUntis-FehlzeitenMX**. Der Wechsel von 0.6.15 auf 0
 Unter **⋮ → Einstellungen** findest du **Anmeldung**, **Klassenauswahl**, **Legende**, **App-Update** und **Impressum**. **App-Update** sucht beim Öffnen der Einstellungen nach Android-Releases auf GitHub. Wenn eine neuere ARM64-Version verfügbar ist, lädt die App die APK auf Wunsch, prüft sie und öffnet die Android-Installation. Bestätige dort das Update. Android kann beim ersten In-App-Update nach der Installationsfreigabe für Fehlzeiten MX fragen.
 
 Beim Start und beim Zurückkehren in die App entsperrst du sie über die Android-Abfrage mit Biometrie oder deiner Displaysperre.
+
+Beim ersten Start erscheint nach dem Entsperren die Auswahl für die WebUntis-Anmeldung. Mit **Automatische Anmeldung** öffnest du direkt das Formular für deine Zugangsdaten. Nach **Speichern** verwendet die App diese für die erste Anmeldung. **Manuelle Anmeldung** öffnet direkt die WebUntis-Anmeldeseite. Mit **Später** kannst du die Anmeldung überspringen und sie in den Einstellungen einrichten.
 
 **Bei WebUntis anmelden** öffnet die BKT-Anmeldeseite in der App und wählt auf der Begrüßungsseite automatisch **Im Browser öffnen**. Die App behält ihr WebUntis-Profil bei App-Sperre und Updates. Fehlende Sitzungscookies ergänzt sie aus der verschlüsselten Sicherung. Verlangt WebUntis eine neue Anmeldung, öffnet sich die Login-Seite aus der Matrix. Bei Bedarf kannst du über **Anmelden** in der Statuszeile erneut starten.
 
