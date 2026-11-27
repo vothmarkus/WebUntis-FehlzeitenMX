@@ -1,4 +1,5 @@
 using static WebUntisAuswertung.Mobile.MobileStyle;
+using NativeView = Android.Views.View;
 
 namespace WebUntisAuswertung.Mobile;
 
@@ -47,6 +48,8 @@ internal sealed class AutomaticLoginPage : ContentPage
         status.IsVisible = status.Text.Length > 0;
         SemanticProperties.SetDescription(username, "WebUntis-Benutzername");
         SemanticProperties.SetDescription(password, "WebUntis-Passwort");
+        username.HandlerChanged += SetAutofillHint;
+        password.HandlerChanged += SetAutofillHint;
         var title = MobileStyle.Label(Title, 21, bold: true);
         SemanticProperties.SetHeadingLevel(title, SemanticHeadingLevel.Level1);
         var header = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) } };
@@ -81,6 +84,15 @@ internal sealed class AutomaticLoginPage : ContentPage
     }
 
     protected override bool OnBackButtonPressed() => working || base.OnBackButtonPressed();
+
+    private static void SetAutofillHint(object? sender, EventArgs args)
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(26) || sender is not Entry entry ||
+            entry.Handler?.PlatformView is not NativeView field) return;
+
+        field.ImportantForAutofill = Android.Views.ImportantForAutofill.Yes;
+        field.SetAutofillHints(entry.IsPassword ? NativeView.AutofillHintPassword : NativeView.AutofillHintUsername);
+    }
 
     protected override void OnDisappearing()
     {
